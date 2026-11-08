@@ -334,9 +334,26 @@ fn emcc_is_available() -> bool {
 }
 
 fn optional_module_skip_reason(module: &str) -> Option<&'static str> {
-    if module.ends_with("-cpp") && !emcc_is_available() {
+    let precompiled = std::env::var_os(PRECOMPILED_MODULE_DIR_ENV_VAR).is_some_and(|directory| {
+        ["wasm", "js"]
+            .into_iter()
+            .any(|extension| Path::new(&directory).join(module).with_extension(extension).is_file())
+    });
+    optional_module_skip_reason_for(module, precompiled, cfg!(target_os = "macos"), || emcc_is_available())
+}
+
+fn optional_module_skip_reason_for(
+    module: &str,
+    precompiled: bool,
+    macos: bool,
+    emcc_available: impl FnOnce() -> bool,
+) -> Option<&'static str> {
+    if precompiled {
+        return None;
+    }
+    if module.ends_with("-cpp") && !emcc_available() {
         Some("emcc is not available; activate Emscripten to run C++ SDK module tests")
-    } else if cfg!(target_os = "macos") && module.ends_with("-cs") {
+    } else if macos && module.ends_with("-cs") {
         Some("NativeAOT-LLVM is only supported on Windows and Linux")
     } else {
         None
@@ -844,5 +861,18 @@ impl TestBuilder {
             prepared_client: self.prepared_client,
             prepared_client_key: self.prepared_client_key,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::optional_module_skip_reason_for;
+
+    #[test]
+    fn precompiled_modules_do_not_require_local_compilers() {
+        assert!(optional_module_skip_reason_for("module-test-cs", true, true, || false).is_none());
+        assert!(optional_module_skip_reason_for("module-test-cpp", true, false, || false).is_none());
+        assert!(optional_module_skip_reason_for("module-test-cs", false, true, || false).is_some());
+        assert!(optional_module_skip_reason_for("module-test-cpp", false, false, || false).is_some());
     }
 }

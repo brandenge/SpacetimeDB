@@ -434,6 +434,757 @@ declare_tests_with_suffix!(typescript, "-ts");
 declare_tests_with_suffix!(csharp, "-cs");
 declare_tests_with_suffix!(cpp, "-cpp");
 
+#[cfg(not(feature = "browser"))]
+mod odin_sdk_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const MODULE: &str = "sdk-test-odin";
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/sdk-test-client");
+    const BINARY: &str = "odin-sdk-test-client";
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test(selector: &str) -> Test {
+        Test::builder()
+            .with_name(selector)
+            .with_module(MODULE)
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -out:{}/debug/{BINARY} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{BINARY} {selector}", target_dir()))
+            .with_prepared_native_client(BINARY, [selector])
+            .build()
+    }
+
+    #[test]
+    fn insert_primitive() {
+        make_test("insert-primitive").run();
+    }
+
+    #[test]
+    fn subscribe_and_cancel() {
+        make_test("subscribe-and-cancel").run();
+    }
+
+    #[test]
+    fn subscribe_all_select_star() {
+        make_test("subscribe-all-select-star").run();
+    }
+
+    #[test]
+    fn subscribe_and_unsubscribe() {
+        make_test("subscribe-and-unsubscribe").run();
+    }
+
+    #[test]
+    fn overlapping_subscriptions() {
+        make_test("overlapping-subscriptions").run();
+    }
+
+    #[test]
+    fn test_parameterized_subscription() {
+        make_test("test-parameterized-subscription").run();
+    }
+
+    #[test]
+    fn test_rls_subscription() {
+        make_test("test-rls-subscription").run();
+    }
+
+    #[test]
+    fn row_deduplication() {
+        make_test("row-deduplication").run();
+    }
+
+    #[test]
+    fn row_deduplication_join_r_and_s() {
+        make_test("row-deduplication-join-r-and-s").run();
+    }
+
+    #[test]
+    fn row_deduplication_r_join_s_and_r_join_t8() {
+        make_test("row-deduplication-r-join-s-and-r-joint").run();
+    }
+
+    #[test]
+    fn test_lhs_join_update() {
+        make_test("test-lhs-join-update").run();
+    }
+
+    #[test]
+    fn test_lhs_join_update_disjoint_queries() {
+        make_test("test-lhs-join-update-disjoint-queries").run();
+    }
+
+    #[test]
+    fn subscription_error_smoke_test() {
+        make_test("subscription-error-smoke-test").run();
+    }
+
+    #[test]
+    fn insert_identity() {
+        make_test("insert-identity").run();
+    }
+
+    #[test]
+    fn insert_caller_identity() {
+        make_test("insert-caller-identity").run();
+    }
+
+    #[test]
+    fn delete_identity() {
+        make_test("delete-identity").run();
+    }
+
+    #[test]
+    fn update_identity() {
+        make_test("update-identity").run();
+    }
+
+    #[test]
+    fn insert_connection_id() {
+        make_test("insert-connection-id").run();
+    }
+
+    #[test]
+    fn insert_caller_connection_id() {
+        make_test("insert-caller-connection-id").run();
+    }
+
+    #[test]
+    fn delete_connection_id() {
+        make_test("delete-connection-id").run();
+    }
+
+    #[test]
+    fn update_connection_id() {
+        make_test("update-connection-id").run();
+    }
+
+    #[test]
+    fn insert_timestamp() {
+        make_test("insert-timestamp").run();
+    }
+
+    #[test]
+    fn insert_call_timestamp() {
+        make_test("insert-call-timestamp").run();
+    }
+
+    #[test]
+    fn insert_uuid() {
+        make_test("insert-uuid").run();
+    }
+
+    #[test]
+    fn insert_call_uuid_v4() {
+        make_test("insert-call-uuid-v4").run();
+    }
+
+    #[test]
+    fn insert_call_uuid_v7() {
+        make_test("insert-call-uuid-v7").run();
+    }
+
+    #[test]
+    fn delete_uuid() {
+        make_test("delete-uuid").run();
+    }
+
+    #[test]
+    fn update_uuid() {
+        make_test("update-uuid").run();
+    }
+
+    #[test]
+    fn insert_struct() {
+        make_test("insert-struct").run();
+    }
+
+    #[test]
+    fn insert_vec() {
+        make_test("insert-vec").run();
+    }
+
+    #[test]
+    fn insert_option_some() {
+        make_test("insert-option-some").run();
+    }
+
+    #[test]
+    fn insert_option_none() {
+        make_test("insert-option-none").run();
+    }
+
+    #[test]
+    fn insert_simple_enum() {
+        make_test("insert-simple-enum").run();
+    }
+
+    #[test]
+    fn pk_simple_enum() {
+        make_test("pk-simple-enum").run();
+    }
+
+    #[test]
+    fn insert_enum_with_payload() {
+        make_test("insert-enum-with-payload").run();
+    }
+
+    #[test]
+    fn insert_primitives_as_strings() {
+        make_test("insert-primitives-as-strings").run();
+    }
+
+    #[test]
+    fn fail_reducer() {
+        make_test("fail-reducer").run();
+    }
+
+    #[test]
+    fn caller_always_notified() {
+        make_test("caller-always-notified").run();
+    }
+
+    #[test]
+    fn on_reducer() {
+        make_test("on-reducer").run();
+    }
+
+    #[test]
+    fn caller_alice_receives_reducer_callback_but_not_bob() {
+        make_test("caller-alice-receives-reducer-callback-but-not-bob").run();
+    }
+
+    #[test]
+    fn reconnect_different_connection_id() {
+        make_test("reconnect-different-connection-id").run();
+    }
+
+    #[test]
+    fn reauth() {
+        make_test("reauth").run();
+    }
+
+    #[test]
+    fn insert_delete_large_table() {
+        make_test("insert-delete-large-table").run();
+    }
+
+    #[test]
+    #[should_panic]
+    fn should_fail() {
+        make_test("should-fail").run();
+    }
+
+    #[test]
+    fn update_primitive() {
+        make_test("update-primitive").run();
+    }
+
+    #[test]
+    fn delete_primitive() {
+        make_test("delete-primitive").run();
+    }
+}
+
+#[cfg(not(feature = "browser"))]
+mod odin_connect_disconnect_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const MODULE: &str = "sdk-test-connect-disconnect-odin";
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/connect-disconnect-client");
+    const BINARY: &str = "odin-connect-disconnect-client";
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test() -> Test {
+        Test::builder()
+            .with_name("connect-disconnect-callback-odin")
+            .with_module(MODULE)
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -out:{}/debug/{BINARY} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{BINARY}", target_dir()))
+            .with_prepared_native_client(BINARY, std::iter::empty::<&str>())
+            .build()
+    }
+
+    #[test]
+    fn connect_disconnect_callbacks() {
+        make_test().run();
+    }
+}
+
+#[cfg(not(feature = "browser"))]
+mod odin_event_table_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const MODULE: &str = "sdk-test-event-table-odin";
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/event-table-client");
+    const BINARY: &str = "odin-event-table-client";
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test(selector: &str) -> Test {
+        Test::builder()
+            .with_name(selector)
+            .with_module(MODULE)
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -out:{}/debug/{BINARY} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{BINARY} {selector}", target_dir()))
+            .with_prepared_native_client(BINARY, [selector])
+            .build()
+    }
+
+    #[test]
+    fn event_table() {
+        make_test("event-table").run();
+    }
+
+    #[test]
+    fn multiple_events() {
+        make_test("multiple-events").run();
+    }
+
+    #[test]
+    fn events_dont_persist() {
+        make_test("events-dont-persist").run();
+    }
+}
+
+#[cfg(not(feature = "browser"))]
+mod odin_procedure_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const MODULE: &str = "sdk-test-procedure-odin";
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/procedure-client");
+    const BINARY: &str = "odin-procedure-client";
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test(selector: &str) -> Test {
+        Test::builder()
+            .with_name(selector)
+            .with_module(MODULE)
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -out:{}/debug/{BINARY} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{BINARY} {selector}", target_dir()))
+            .with_prepared_native_client(BINARY, [selector])
+            .build()
+    }
+
+    #[test]
+    fn procedure_return_values() {
+        make_test("procedure-return-values").run();
+    }
+
+    #[test]
+    fn procedure_observe_panic() {
+        make_test("procedure-observe-panic").run();
+    }
+
+    #[test]
+    fn insert_with_tx_commit() {
+        make_test("insert-with-tx-commit").run();
+    }
+
+    #[test]
+    fn insert_with_tx_rollback() {
+        make_test("insert-with-tx-rollback").run();
+    }
+
+    #[test]
+    fn procedure_http_ok() {
+        make_test("procedure-http-ok").run();
+    }
+
+    #[test]
+    fn procedure_http_err() {
+        make_test("procedure-http-err").run();
+    }
+
+    #[test]
+    fn schedule_procedure() {
+        make_test("schedule-procedure").run();
+    }
+
+    #[test]
+    fn procedure_reducer_interleaving() {
+        make_test("procedure-reducer-interleaving").run();
+    }
+
+    #[test]
+    fn procedure_reducer_same_client_interleaved() {
+        make_test("procedure-reducer-same-client-interleaved").run();
+    }
+
+    #[test]
+    fn procedure_concurrent_with_scheduled_reducer() {
+        make_test("procedure-concurrent-with-scheduled-reducer").run();
+    }
+
+    #[test]
+    fn scheduled_procedure_scheduled_reducer_interleaved() {
+        make_test("scheduled-procedure-scheduled-reducer-interleaved").run();
+    }
+
+    #[test]
+    fn scheduled_procedure_update_while_inflight() {
+        make_test("scheduled-procedure-update-while-inflight").run();
+    }
+}
+
+#[cfg(not(feature = "browser"))]
+mod odin_view_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const MODULE: &str = "sdk-test-view-odin";
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/view-client");
+    const BINARY: &str = "odin-view-client";
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test(selector: &str) -> Test {
+        Test::builder()
+            .with_name(selector)
+            .with_module(MODULE)
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -out:{}/debug/{BINARY} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{BINARY} {selector}", target_dir()))
+            .with_prepared_native_client(BINARY, [selector])
+            .build()
+    }
+
+    #[test]
+    fn anonymous_view_subscribe() {
+        make_test("view-anonymous-subscribe").run();
+    }
+
+    #[test]
+    fn anonymous_view_subscribe_with_query_builder() {
+        make_test("view-anonymous-subscribe-with-query-builder").run();
+    }
+
+    #[test]
+    fn non_anonymous_view_subscribe() {
+        make_test("view-non-anonymous-subscribe").run();
+    }
+
+    #[test]
+    fn view_subscription_update() {
+        make_test("view-subscription-update").run();
+    }
+
+    #[test]
+    fn view_non_table_return() {
+        make_test("view-non-table-return").run();
+    }
+
+    #[test]
+    fn view_non_table_query_builder_return() {
+        make_test("view-non-table-query-builder-return").run();
+    }
+
+    #[test]
+    fn view_disconnect_does_not_break_sender_updates() {
+        make_test("view-disconnect-does-not-break-sender-updates").run();
+    }
+
+    #[test]
+    fn view_pk_on_update() {
+        make_test("view-pk-on-update").run();
+    }
+
+    #[test]
+    fn view_pk_join_query_builder() {
+        make_test("view-pk-join-query-builder").run();
+    }
+
+    #[test]
+    fn view_pk_semijoin_two_sender_views_query_builder() {
+        make_test("view-pk-semijoin-two-sender-views-query-builder").run();
+    }
+
+    #[test]
+    fn sender_scoped_procedural_pk_view() {
+        make_test("sender-scoped-pk-view").run();
+    }
+
+    #[test]
+    fn procedural_view_pk_left_semijoin() {
+        make_test("view-pk-left-semijoin").run();
+    }
+
+    #[test]
+    fn procedural_view_pk_right_semijoin() {
+        make_test("view-pk-right-semijoin").run();
+    }
+}
+
+#[cfg(not(feature = "browser"))]
+mod odin_case_conversion_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const MODULE: &str = "sdk-test-case-conversion";
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/case-conversion-client");
+    const BINARY: &str = "odin-case-conversion-client";
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test(selector: &str) -> Test {
+        Test::builder()
+            .with_name(selector)
+            .with_module(MODULE)
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -out:{}/debug/{BINARY} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{BINARY} {selector}", target_dir()))
+            .with_prepared_native_client(BINARY, [selector])
+            .build()
+    }
+
+    #[test]
+    fn insert_player() {
+        make_test("insert-player").run();
+    }
+
+    #[test]
+    fn insert_person() {
+        make_test("insert-person").run();
+    }
+
+    #[test]
+    fn ban_player() {
+        make_test("ban-player").run();
+    }
+
+    #[test]
+    fn query_builder_filter() {
+        make_test("query-builder-filter").run();
+    }
+
+    #[test]
+    fn query_builder_join() {
+        make_test("query-builder-join").run();
+    }
+
+    #[test]
+    fn query_view() {
+        make_test("view").run();
+    }
+}
+
+#[cfg(not(feature = "browser"))]
+mod odin_cross_language_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/cross-language-client");
+    const MODULE_VARIANTS: [(&str, &str, &str, &str); 4] = [
+        ("rust", "", "one_u_8", "insert_one_u_8"),
+        ("typescript", "-ts", "one_u_8", "insert_one_u_8"),
+        ("csharp", "-cs", "one_u8", "insert_one_u8"),
+        ("cpp", "-cpp", "one_u8", "insert_one_u8"),
+    ];
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test(language: &str, suffix: &str, table: &str, reducer: &str) -> Test {
+        let key = format!("odin-cross-language-{language}");
+        let bindings_dir = format!("module_bindings_{language}");
+        let binary = format!("odin-cross-language-{language}");
+        Test::builder()
+            .with_name(format!("odin-cross-language-{language}"))
+            .with_module(format!("sdk-test{suffix}"))
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir(&bindings_dir)
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -collection:module_bindings={CLIENT}/{bindings_dir} -out:{}/debug/{binary} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{binary} insert-primitive {language} {table} {reducer}", target_dir()))
+            .with_prepared_native_client(binary, ["insert-primitive", language, table, reducer])
+            .with_prepared_client_key(key)
+            .build()
+    }
+
+    #[test]
+    fn rust_module() {
+        make_test(
+            MODULE_VARIANTS[0].0,
+            MODULE_VARIANTS[0].1,
+            MODULE_VARIANTS[0].2,
+            MODULE_VARIANTS[0].3,
+        )
+        .run();
+    }
+
+    #[test]
+    fn typescript_module() {
+        make_test(
+            MODULE_VARIANTS[1].0,
+            MODULE_VARIANTS[1].1,
+            MODULE_VARIANTS[1].2,
+            MODULE_VARIANTS[1].3,
+        )
+        .run();
+    }
+
+    #[test]
+    fn csharp_module() {
+        make_test(
+            MODULE_VARIANTS[2].0,
+            MODULE_VARIANTS[2].1,
+            MODULE_VARIANTS[2].2,
+            MODULE_VARIANTS[2].3,
+        )
+        .run();
+    }
+
+    #[test]
+    fn cpp_module() {
+        make_test(
+            MODULE_VARIANTS[3].0,
+            MODULE_VARIANTS[3].1,
+            MODULE_VARIANTS[3].2,
+            MODULE_VARIANTS[3].3,
+        )
+        .run();
+    }
+}
+
+#[cfg(not(feature = "browser"))]
+mod odin_compression_tests {
+    use spacetimedb_testing::sdk::Test;
+    use std::path::Path;
+
+    const MODULE: &str = "sdk-test-odin";
+    const CLIENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../odin/tests/compression-client");
+    const BINARY: &str = "odin-compression-client";
+
+    fn target_dir() -> String {
+        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    pub(super) fn make_test(selector: &str) -> Test {
+        Test::builder()
+            .with_name(selector)
+            .with_module(MODULE)
+            .with_client(CLIENT)
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={}/../../crates/bindings-odin -out:{}/debug/{BINARY} -no-threaded-checker",
+                env!("CARGO_MANIFEST_DIR"),
+                target_dir()
+            ))
+            .with_run_command(format!("{}/debug/{BINARY} {selector}", target_dir()))
+            .with_prepared_native_client(BINARY, [selector])
+            .build()
+    }
+
+    #[test]
+    fn two_different_compression_algos() {
+        make_test("two-different-compression-algos").run();
+    }
+}
+
 /// Tests of event table functionality, using <./event-table-client> and <../../../modules/sdk-test>.
 ///
 /// These are separate from the existing client because as of writing (2026-02-07),
@@ -906,6 +1657,28 @@ fn prepare_clients() {
         case_conversion_rust_ts_client::make_test("insert-player"),
         rust_view_pk::make_test("view-pk-on-update"),
         rust_procedural_view_pk::make_test("sender-scoped-pk-view"),
+        #[cfg(not(feature = "browser"))]
+        odin_sdk_tests::make_test("insert-primitive"),
+        #[cfg(not(feature = "browser"))]
+        odin_connect_disconnect_tests::make_test(),
+        #[cfg(not(feature = "browser"))]
+        odin_event_table_tests::make_test("event-table"),
+        #[cfg(not(feature = "browser"))]
+        odin_procedure_tests::make_test("procedure-return-values"),
+        #[cfg(not(feature = "browser"))]
+        odin_view_tests::make_test("view-anonymous-subscribe"),
+        #[cfg(not(feature = "browser"))]
+        odin_compression_tests::make_test("two-different-compression-algos"),
+        #[cfg(not(feature = "browser"))]
+        odin_case_conversion_tests::make_test("insert-player"),
+        #[cfg(not(feature = "browser"))]
+        odin_cross_language_tests::make_test("rust", "", "one_u_8", "insert_one_u_8"),
+        #[cfg(not(feature = "browser"))]
+        odin_cross_language_tests::make_test("typescript", "-ts", "one_u_8", "insert_one_u8"),
+        #[cfg(not(feature = "browser"))]
+        odin_cross_language_tests::make_test("csharp", "-cs", "one_u8", "insert_one_u8"),
+        #[cfg(not(feature = "browser"))]
+        odin_cross_language_tests::make_test("cpp", "-cpp", "one_u8", "insert_one_u8"),
     ];
 
     for client in prepared_clients {
