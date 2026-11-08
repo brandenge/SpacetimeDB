@@ -7,8 +7,8 @@ use spacetimedb_schema::schema::{ColumnSchema, TableOrViewSchema};
 use spacetimedb_schema::table_name::TableName;
 use spacetimedb_sql_parser::{
     ast::{
-        sql::{SqlAst, SqlDelete, SqlInsert, SqlSelect, SqlSet, SqlShow, SqlUpdate},
-        BinOp, SqlIdent, SqlLiteral,
+        sql::{SqlAst, SqlDelete, SqlInsert, SqlOrder, SqlSelect, SqlSet, SqlShow, SqlUpdate},
+        BinOp, Project, SqlExpr, SqlFrom, SqlIdent, SqlLiteral,
     },
     parser::sql::parse_sql,
 };
@@ -17,13 +17,13 @@ use thiserror::Error;
 use crate::{
     check::{expect_select_all_view_calls, Relvars},
     errors::{DmlOnView, InvalidLiteral},
-    expr::{FieldProject, ProjectList, RelExpr, Relvar},
+    expr::{FieldProject, ProjectList, RelExpr, Relvar, SortKey},
     type_limit,
 };
 
 use super::{
     check::{SchemaView, TypeChecker, TypingResult},
-    errors::{InsertFieldsError, InsertValuesError, TypingError, UnexpectedType, Unresolved},
+    errors::{InsertFieldsError, InsertValuesError, TypingError, UnexpectedType, Unresolved, Unsupported},
     expr::Expr,
     parse, type_expr, type_proj, type_select, StatementCtx, StatementSource,
 };
@@ -411,40 +411,60 @@ impl TypeChecker for SqlChecker {
             SqlSelect {
                 project,
                 from,
-                filter: None,
-                limit: None,
-            } => type_proj(Self::type_from(from, vars, tx)?, project, vars),
-            SqlSelect {
-                project,
-                from,
-                filter: None,
-                limit: Some(n),
-            } => type_limit(type_proj(Self::type_from(from, vars, tx)?, project, vars)?, &n),
-            SqlSelect {
-                project,
-                from,
-                filter: Some(expr),
-                limit: None,
-            } => type_proj(
-                type_select(Self::type_from(from, vars, tx)?, expr, vars)?,
-                project,
-                vars,
-            ),
-            SqlSelect {
-                project,
-                from,
-                filter: Some(expr),
-                limit: Some(n),
-            } => type_limit(
-                type_proj(
-                    type_select(Self::type_from(from, vars, tx)?, expr, vars)?,
-                    project,
-                    vars,
-                )?,
-                &n,
-            ),
+                filter,
+                order_by,
+                limit,
+            } => type_sql_query(from, project, filter, order_by, limit, vars, tx),
         }
     }
+}
+
+fn type_sql_query(
+    from: SqlFrom,
+    project: Project,
+    filter: Option<SqlExpr>,
+    order_by: Vec<SqlOrder>,
+    limit: Option<Box<str>>,
+    vars: &mut Relvars,
+    tx: &impl SchemaView,
+) -> TypingResult<ProjectList> {
+    let mut input = SqlChecker::type_from(from, vars, tx)?;
+    if let Some(filter) = filter {
+        input = type_select(input, filter, vars)?;
+    }
+    let mut output = type_proj(input, project, vars)?;
+    if !order_by.is_empty() {
+        output = type_order_by(output, order_by)?;
+    }
+    if let Some(limit) = limit {
+        output = type_limit(output, &limit)?;
+    }
+    Ok(output)
+}
+
+fn type_order_by(project: ProjectList, order_by: Vec<SqlOrder>) -> TypingResult<ProjectList> {
+    let mut projected_fields = Vec::new();
+    project.for_each_return_field(|name, ty| projected_fields.push((name.to_string(), ty.is_option())));
+
+    let mut sort_keys = Vec::with_capacity(order_by.len());
+    for order in order_by {
+        let column = match order.expr {
+            SqlExpr::Var(SqlIdent(name)) | SqlExpr::Field(_, SqlIdent(name)) => {
+                name.as_ref().rsplit('.').next().unwrap_or_default().to_owned()
+            }
+            _ => return Err(Unsupported::ProjectExpr.into()),
+        };
+        let Some(field_index) = projected_fields.iter().position(|(name, _)| name == &column) else {
+            return Err(Unresolved::var(&column).into());
+        };
+        sort_keys.push(SortKey {
+            field_index: u32::try_from(field_index).map_err(|_| Unsupported::ProjectExpr)?,
+            ascending: order.ascending,
+            nulls_first: order.nulls_first.unwrap_or(!order.ascending),
+            nullable: projected_fields[field_index].1,
+        });
+    }
+    Ok(ProjectList::OrderBy(Box::new(project), sort_keys))
 }
 
 pub fn parse_and_type_sql(sql: &str, tx: &impl SchemaView, _auth: &AuthCtx) -> TypingResult<Statement> {
@@ -524,10 +544,37 @@ mod tests {
             "select str from t",
             "select str, arr from t",
             "select t.str, arr from t",
+            "select str from t order by str desc",
+            "select str as label from t order by label",
+            "select count(*) as n from t order by n desc",
             "select * from t limit 5",
         ] {
             let result = parse_and_type_sql(sql, &tx);
             assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn sum_is_nullable_and_requires_an_integer_from_one_source() {
+        use crate::expr::{AggType, ProjectList};
+
+        let tx = SchemaViewer(module_def());
+        let Statement::Select(ProjectList::Agg(_, AggType::Sum { field, ty }, _, result_type)) =
+            parse_and_type_sql("select sum(u32) as total from t", &tx).unwrap()
+        else {
+            panic!("expected a typed SUM aggregate")
+        };
+
+        assert_eq!(field, 0);
+        assert_eq!(ty, AlgebraicType::U32);
+        assert_eq!(result_type, AlgebraicType::option(AlgebraicType::U32));
+
+        for sql in [
+            "select sum(f32) as total from t",
+            "select sum(str) as total from t",
+            "select sum(t.u32) as total from t join s on t.u32 = s.u32",
+        ] {
+            assert!(parse_and_type_sql(sql, &tx).is_err(), "{sql}");
         }
     }
 
@@ -540,6 +587,8 @@ mod tests {
             "select id, str from s join t",
             // Wrong type for limit
             "select * from t limit '5'",
+            // ORDER BY must reference a returned column
+            "select str from t order by u32",
             // Unqualified name in join expression
             "select t.* from t join s on t.u32 = s.u32 where bytes = 0xABCD",
         ] {

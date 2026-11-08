@@ -39,7 +39,7 @@
 //!     ;
 //!
 //! select
-//!     = SELECT [ DISTINCT ] projection FROM relation [ [ WHERE predicate ] [ ORDER BY order ] [ LIMIT limit ] ]
+//!     = SELECT projection FROM relation [ WHERE predicate ] [ ORDER BY order ] [ LIMIT limit ]
 //!     ;
 //!
 //! projection
@@ -64,13 +64,11 @@
 //!
 //! aggrExpr
 //!     = COUNT '(' STAR ')' AS ident
-//!     | COUNT '(' DISTINCT columnExpr ')' AS ident
-//!     | SUM   '(' columnExpr ')' AS ident
+//!     | SUM '(' columnExpr ')' AS ident
 //!     ;
 //!
 //! relation
 //!     = table
-//!     | '(' query ')'
 //!     | relation [ [AS] ident ] { [INNER] JOIN relation [ [AS] ident ] ON predicate }
 //!     ;
 //!
@@ -102,7 +100,8 @@
 //!     ;
 //!
 //! order
-//!     = columnExpr [ ASC | DESC ] { ',' columnExpr [ ASC | DESC ] }
+//!     = columnExpr [ ASC | DESC ] [ NULLS FIRST | NULLS LAST ]
+//!       { ',' columnExpr [ ASC | DESC ] [ NULLS FIRST | NULLS LAST ] }
 //!     ;
 //!
 //! limit
@@ -129,15 +128,15 @@
 
 use sqlparser::{
     ast::{
-        Assignment, Expr, GroupByExpr, ObjectName, Query, Select, SetExpr, Statement, TableFactor, TableWithJoins,
-        Value, Values,
+        Assignment, Expr, GroupByExpr, ObjectName, OrderByExpr, Query, Select, SetExpr, Statement, TableFactor,
+        TableWithJoins, Value, Values,
     },
     dialect::PostgreSqlDialect,
     parser::Parser,
 };
 
 use crate::ast::{
-    sql::{SqlAst, SqlDelete, SqlInsert, SqlSelect, SqlSet, SqlShow, SqlUpdate, SqlValues},
+    sql::{SqlAst, SqlDelete, SqlInsert, SqlOrder, SqlSelect, SqlSet, SqlShow, SqlUpdate, SqlValues},
     SqlIdent,
 };
 
@@ -335,7 +334,7 @@ impl RelParser for SqlParser {
                 offset: None,
                 fetch: None,
                 locks,
-            } if order_by.is_empty() && locks.is_empty() => parse_set_op(*body, None),
+            } if locks.is_empty() => parse_set_op(*body, None, parse_order_by(order_by)?),
             Query {
                 with: None,
                 body,
@@ -344,22 +343,35 @@ impl RelParser for SqlParser {
                 offset: None,
                 fetch: None,
                 locks,
-            } if order_by.is_empty() && locks.is_empty() => parse_set_op(*body, Some(n.into_boxed_str())),
+            } if locks.is_empty() => parse_set_op(*body, Some(n.into_boxed_str()), parse_order_by(order_by)?),
             _ => Err(SqlUnsupported::feature(query).into()),
         }
     }
 }
 
+fn parse_order_by(orders: Vec<OrderByExpr>) -> SqlParseResult<Vec<SqlOrder>> {
+    orders
+        .into_iter()
+        .map(|order| {
+            Ok(SqlOrder {
+                expr: parse_expr_opt(Some(order.expr))?.unwrap(),
+                ascending: order.asc.unwrap_or(true),
+                nulls_first: order.nulls_first,
+            })
+        })
+        .collect()
+}
+
 /// Parse a set operation
-fn parse_set_op(expr: SetExpr, limit: Option<Box<str>>) -> SqlParseResult<SqlSelect> {
+fn parse_set_op(expr: SetExpr, limit: Option<Box<str>>, order_by: Vec<SqlOrder>) -> SqlParseResult<SqlSelect> {
     match expr {
-        SetExpr::Select(select) => parse_select(*select, limit).map(SqlSelect::qualify_vars),
+        SetExpr::Select(select) => parse_select(*select, order_by, limit).map(SqlSelect::qualify_vars),
         _ => Err(SqlUnsupported::feature(expr).into()),
     }
 }
 
 /// Parse a SELECT statement
-fn parse_select(select: Select, limit: Option<Box<str>>) -> SqlParseResult<SqlSelect> {
+fn parse_select(select: Select, order_by: Vec<SqlOrder>, limit: Option<Box<str>>) -> SqlParseResult<SqlSelect> {
     match select {
         Select {
             distinct: None,
@@ -387,6 +399,7 @@ fn parse_select(select: Select, limit: Option<Box<str>>) -> SqlParseResult<SqlSe
                 project: parse_projection(projection)?,
                 from: SqlParser::parse_from(from)?,
                 filter: parse_expr_opt(selection)?,
+                order_by,
                 limit,
             })
         }
@@ -411,6 +424,9 @@ mod tests {
             "select * from t order by a limit b",
             // GROUP BY
             "select a, count(*) from t group by a",
+            // SUM requires one integer column expression
+            "select sum(*) as total from t",
+            "select sum(distinct a) as total from t",
             // Join updates
             "update t as a join s as b on a.id = b.id set c = 1",
             // Join updates
@@ -437,7 +453,12 @@ mod tests {
             r#"SELECT * FROM "s"."t" WHERE "s"."t"."a" = 1"#,
             "select a from t where x = :sender",
             "select count(*) as n from t",
+            "select sum(a) as total from t",
+            "select sum(t.a) as total from t",
             "select count(*) as n from t join s on t.id = s.id where s.x = 1",
+            "select sum(a) as total from t where a > 0",
+            "select a, b from t order by a, b desc limit 10",
+            "select count(*) as n from t order by n desc",
             "insert into t values (1, 2)",
             "delete from t",
             "delete from t where a = 1",

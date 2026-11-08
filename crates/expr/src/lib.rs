@@ -5,7 +5,7 @@ use anyhow::Context;
 use bigdecimal::BigDecimal;
 use bigdecimal::ToPrimitive;
 use check::{Relvars, TypingResult};
-use errors::{DuplicateName, InvalidLiteral, InvalidOp, InvalidWildcard, UnexpectedType, Unresolved};
+use errors::{DuplicateName, InvalidLiteral, InvalidOp, InvalidWildcard, UnexpectedType, Unresolved, Unsupported};
 use ethnum::i256;
 use ethnum::u256;
 use expr::AggType;
@@ -67,6 +67,24 @@ pub(crate) fn type_proj(input: RelExpr, proj: ast::Project, vars: &Relvars) -> T
             RawIdentifier::new(&*alias),
             AlgebraicType::U64,
         )),
+        ast::Project::Sum(expr, SqlIdent(alias)) => {
+            let Expr::Field(field) = type_expr(vars, expr.into(), None)? else {
+                return Err(Unsupported::Sum.into());
+            };
+            if !is_sum_type(&field.ty) || !is_single_source(&input) {
+                return Err(Unsupported::Sum.into());
+            }
+            let ty = field.ty.clone();
+            Ok(ProjectList::Agg(
+                vec![input],
+                AggType::Sum {
+                    field: field.field,
+                    ty: ty.clone(),
+                },
+                RawIdentifier::new(&*alias),
+                AlgebraicType::option(ty),
+            ))
+        }
         ast::Project::Exprs(elems) => {
             let mut projections = vec![];
             let mut names = HashSet::new();
@@ -84,6 +102,30 @@ pub(crate) fn type_proj(input: RelExpr, proj: ast::Project, vars: &Relvars) -> T
 
             Ok(ProjectList::List(vec![input], projections))
         }
+    }
+}
+
+fn is_sum_type(ty: &AlgebraicType) -> bool {
+    matches!(
+        ty,
+        AlgebraicType::I8
+            | AlgebraicType::U8
+            | AlgebraicType::I16
+            | AlgebraicType::U16
+            | AlgebraicType::I32
+            | AlgebraicType::U32
+            | AlgebraicType::I64
+            | AlgebraicType::U64
+            | AlgebraicType::I128
+            | AlgebraicType::U128
+    )
+}
+
+fn is_single_source(input: &RelExpr) -> bool {
+    match input {
+        RelExpr::RelVar(relvar) => !relvar.schema.is_view(),
+        RelExpr::Select(input, _) => is_single_source(input),
+        RelExpr::LeftDeepJoin(_) | RelExpr::EqJoin(..) => false,
     }
 }
 

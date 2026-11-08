@@ -164,7 +164,7 @@ SELECT * FROM Inventory WHERE price > {X} AND amount < {Y}
 ### SELECT
 
 ```ebnf
-SELECT projection FROM relation [ WHERE predicate ] [LIMIT NUM]
+SELECT projection FROM relation [ WHERE predicate ] [ ORDER BY order ] [ LIMIT NUM ]
 ```
 
 The query language is a strict superset of the subscription language.
@@ -194,6 +194,7 @@ projExpr
 
 aggExpr
     = COUNT '(' '*' ')' [AS] alias
+    | SUM '(' column ')' [AS] alias
     ;
 ```
 
@@ -211,12 +212,18 @@ SELECT item_name, price FROM Inventory
 
 It also allows for counting the number of input rows via the `COUNT` function.
 `COUNT` always returns a single row, even if the input is empty.
+`SUM` accepts an integer column from a single source relation and returns an optional value;
+the result is `NULL` when no rows match. Integer overflow is reported as a query error.
 
 ##### Example
 
 ```sql
 -- Count the items in my inventory
 SELECT COUNT(*) AS n FROM Inventory
+```
+
+```sql
+SELECT SUM(price) AS total_price FROM Inventory WHERE category_id = 4
 ```
 
 #### FROM Clause
@@ -242,11 +249,23 @@ WHERE product.name = {product_name}
 
 See [Subscriptions](#where).
 
+#### ORDER BY Clause
+
+One-off queries may order by one or more columns in the projection. Each column may specify
+`ASC` or `DESC`, and nullable columns may specify `NULLS FIRST` or `NULLS LAST`. If omitted,
+ascending order places nulls last and descending order places nulls first. Subscriptions do not
+support `ORDER BY`.
+
+```sql
+SELECT item_name, price FROM Inventory ORDER BY price DESC NULLS LAST LIMIT 20
+```
+
 #### LIMIT clause
 
 Limits the number of rows a query returns by specifying an upper bound.
 The `LIMIT` may return fewer rows if the query itself returns fewer rows.
-`LIMIT` does not order or transform its input in any way.
+`LIMIT` does not order or transform its input in any way; when combined with `ORDER BY`, it is
+applied after sorting.
 
 ##### Examples
 
@@ -494,15 +513,15 @@ SELECT * FROM "Balance$"
 When designing your schema or crafting your queries,
 consider the following best practices to ensure optimal performance:
 
-- **Add Primary Key and/or Unique Constraints:**  
+- **Add Primary Key and/or Unique Constraints:**
    Constrain columns whose values are guaranteed to be distinct as either unique or primary keys.
   The query planner can further optimize joins if it knows the join values to be unique.
 
-- **Index Filtered Columns:**  
+- **Index Filtered Columns:**
    Index columns frequently used in a `WHERE` clause.
   Indexes reduce the number of rows scanned by the query engine.
 
-- **Index Join Columns:**  
+- **Index Join Columns:**
    Index columns whose values are frequently used as join keys.
   These are columns that are used in the `ON` condition of a `JOIN`.
 
@@ -515,7 +534,7 @@ consider the following best practices to ensure optimal performance:
   it is not necessary to explicitly index it as well,
   since these constraints automatically index the column in question.
 
-- **Optimize Join Order:**  
+- **Optimize Join Order:**
    Place tables with the most selective filters first in your `FROM` clause.
   This minimizes intermediate result sizes and improves query efficiency.
 

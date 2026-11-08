@@ -48,6 +48,8 @@ pub enum Unsupported {
     ReturnType,
     #[error("Unsupported expression in projection")]
     ProjectExpr,
+    #[error("SUM requires an integer column from a single table")]
+    Sum,
 }
 
 // TODO: It might be better to return the missing/extra fields

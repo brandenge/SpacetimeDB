@@ -4,6 +4,13 @@ use crate::parser::{errors::SqlUnsupported, SqlParseResult};
 
 use super::{Project, SqlExpr, SqlFrom, SqlIdent, SqlLiteral};
 
+#[derive(Debug)]
+pub struct SqlOrder {
+    pub expr: SqlExpr,
+    pub ascending: bool,
+    pub nulls_first: Option<bool>,
+}
+
 /// The AST for the SQL DML and query language
 #[derive(Debug)]
 pub enum SqlAst {
@@ -66,6 +73,7 @@ pub struct SqlSelect {
     pub project: Project,
     pub from: SqlFrom,
     pub filter: Option<SqlExpr>,
+    pub order_by: Vec<SqlOrder>,
     pub limit: Option<Box<str>>,
 }
 
@@ -75,6 +83,14 @@ impl SqlSelect {
             SqlFrom::Expr(_, alias, _) => Self {
                 project: self.project.qualify_vars(alias.clone()),
                 filter: self.filter.map(|expr| expr.qualify_vars(alias.clone())),
+                order_by: self
+                    .order_by
+                    .into_iter()
+                    .map(|order| SqlOrder {
+                        expr: order.expr.qualify_vars(alias.clone()),
+                        ..order
+                    })
+                    .collect(),
                 ..self
             },
             SqlFrom::Join(..) => self,
@@ -91,6 +107,9 @@ impl SqlSelect {
         if let Some(expr) = &self.filter
             && expr.has_unqualified_vars()
         {
+            return Err(SqlUnsupported::UnqualifiedNames.into());
+        }
+        if self.order_by.iter().any(|order| order.expr.has_unqualified_vars()) {
             return Err(SqlUnsupported::UnqualifiedNames.into());
         }
         Ok(self)
