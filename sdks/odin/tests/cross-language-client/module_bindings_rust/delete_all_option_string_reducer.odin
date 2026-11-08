@@ -19,4 +19,3 @@ call_delete_all_option_string_with_callback :: proc(connection: ^client.Connecti
 call_delete_all_option_string_with_result_callback :: proc(connection: ^client.Connection, s: runtime.Maybe(string), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_option_string", Delete_All_Option_String_Args{s}, callback, user)
 }
-

@@ -20,4 +20,3 @@ call_insert_pk_u256_with_callback :: proc(connection: ^client.Connection, n: hos
 call_insert_pk_u256_with_result_callback :: proc(connection: ^client.Connection, n: host.U256, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_pk_u_256", Insert_Pk_U_256_Args{n, data}, callback, user)
 }
-

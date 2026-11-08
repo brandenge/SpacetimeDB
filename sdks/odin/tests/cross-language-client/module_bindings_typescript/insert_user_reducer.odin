@@ -20,4 +20,3 @@ call_insert_user_with_callback :: proc(connection: ^client.Connection, name: str
 call_insert_user_with_result_callback :: proc(connection: ^client.Connection, name: string, identity: host.Identity, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_user", Insert_User_Args{name, identity}, callback, user)
 }
-

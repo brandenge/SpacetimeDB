@@ -18,6 +18,16 @@ fn compiled_typescript_module() -> &'static ModuleDef {
     MODULE.get_or_init(|| CompiledModule::compile("module-test-ts", CompilationMode::Debug).extract_schema_blocking())
 }
 
+fn assert_single_trailing_newline(files: &[spacetimedb_codegen::OutputFile]) {
+    for file in files {
+        assert!(
+            file.code.ends_with('\n') && !file.code.ends_with("\n\n"),
+            "{} should end with exactly one newline",
+            file.filename
+        );
+    }
+}
+
 #[test]
 fn module_test_fixtures_include_idc_syntax() {
     use spacetimedb_schema::def::FunctionVisibility;
@@ -90,6 +100,14 @@ declare_tests! {
     test_codegen_typescript => TypeScript::default(),
     test_codegen_rust => Rust,
     test_codegen_odin => Odin,
+}
+
+#[test]
+fn test_codegen_odin_client_and_receiver_files_end_with_single_newline() {
+    let module = compiled_module();
+    let mut files = generate(&module, &Odin, &CodegenOptions::default());
+    files.extend(generate_receiver_bindings(&module, ReceiverLanguage::Odin, None).unwrap());
+    assert_single_trailing_newline(&files);
 }
 
 #[test]
@@ -829,6 +847,7 @@ fn test_codegen_odin_server_module_schema() {
 
     let module: ModuleDef = builder.finish().try_into().unwrap();
     let files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    assert_single_trailing_newline(&files);
     let schema = files
         .iter()
         .find(|file| file.filename == "module_schema/module_schema.odin")

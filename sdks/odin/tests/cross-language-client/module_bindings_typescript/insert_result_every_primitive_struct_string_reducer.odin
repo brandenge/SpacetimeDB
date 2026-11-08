@@ -19,4 +19,3 @@ call_insert_result_every_primitive_struct_string_with_callback :: proc(connectio
 call_insert_result_every_primitive_struct_string_with_result_callback :: proc(connection: ^client.Connection, r: host.Result(EveryPrimitiveStruct, string), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_result_every_primitive_struct_string", Insert_Result_Every_Primitive_Struct_String_Args{r}, callback, user)
 }
-

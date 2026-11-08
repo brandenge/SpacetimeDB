@@ -16,4 +16,3 @@ call_sorted_uuids_insert_with_callback :: proc(connection: ^client.Connection, c
 call_sorted_uuids_insert_with_result_callback :: proc(connection: ^client.Connection, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "sorted_uuids_insert", Sorted_Uuids_Insert_Args{}, callback, user)
 }
-

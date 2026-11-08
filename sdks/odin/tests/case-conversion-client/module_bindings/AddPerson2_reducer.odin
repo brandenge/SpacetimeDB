@@ -21,4 +21,3 @@ call_AddPerson2_with_callback :: proc(connection: ^client.Connection, first_3_na
 call_AddPerson2_with_result_callback :: proc(connection: ^client.Connection, first_3_name: string, player_ref: u32, age_value: u8, score_total: u32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "add_person_2", Add_Person_2_Args{first_3_name, player_ref, age_value, score_total}, callback, user)
 }
-

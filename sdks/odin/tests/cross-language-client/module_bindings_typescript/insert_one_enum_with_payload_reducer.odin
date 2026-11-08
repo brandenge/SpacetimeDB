@@ -18,4 +18,3 @@ call_insert_one_enum_with_payload_with_callback :: proc(connection: ^client.Conn
 call_insert_one_enum_with_payload_with_result_callback :: proc(connection: ^client.Connection, e: EnumWithPayload, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_one_enum_with_payload", Insert_One_Enum_With_Payload_Args{e}, callback, user)
 }
-

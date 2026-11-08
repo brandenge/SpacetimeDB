@@ -19,4 +19,3 @@ call_insert_one_i256_with_callback :: proc(connection: ^client.Connection, n: ho
 call_insert_one_i256_with_result_callback :: proc(connection: ^client.Connection, n: host.I256, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_one_i_256", Insert_One_I_256_Args{n}, callback, user)
 }
-

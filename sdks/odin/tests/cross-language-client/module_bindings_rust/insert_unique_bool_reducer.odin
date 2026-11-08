@@ -19,4 +19,3 @@ call_insert_unique_bool_with_callback :: proc(connection: ^client.Connection, b:
 call_insert_unique_bool_with_result_callback :: proc(connection: ^client.Connection, b: bool, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_unique_bool", Insert_Unique_Bool_Args{b, data}, callback, user)
 }
-

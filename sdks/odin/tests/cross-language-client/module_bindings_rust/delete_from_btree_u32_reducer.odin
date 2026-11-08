@@ -18,4 +18,3 @@ call_delete_from_btree_u32_with_callback :: proc(connection: ^client.Connection,
 call_delete_from_btree_u32_with_result_callback :: proc(connection: ^client.Connection, rows: []BTreeU32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_from_btree_u_32", Delete_From_Btree_U_32_Args{rows}, callback, user)
 }
-

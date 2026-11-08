@@ -16,4 +16,3 @@ call_no_op_succeeds_with_callback :: proc(connection: ^client.Connection, callba
 call_no_op_succeeds_with_result_callback :: proc(connection: ^client.Connection, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "no_op_succeeds", No_Op_Succeeds_Args{}, callback, user)
 }
-

@@ -18,4 +18,3 @@ call_insert_vec_every_primitive_struct_with_callback :: proc(connection: ^client
 call_insert_vec_every_primitive_struct_with_result_callback :: proc(connection: ^client.Connection, s: []EveryPrimitiveStruct, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_vec_every_primitive_struct", Insert_Vec_Every_Primitive_Struct_Args{s}, callback, user)
 }
-

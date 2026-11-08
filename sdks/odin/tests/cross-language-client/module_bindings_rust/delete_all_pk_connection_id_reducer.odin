@@ -20,4 +20,3 @@ call_delete_all_pk_connection_id_with_callback :: proc(connection: ^client.Conne
 call_delete_all_pk_connection_id_with_result_callback :: proc(connection: ^client.Connection, a: host.Connection_Id, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_pk_connection_id", Delete_All_Pk_Connection_Id_Args{a, data}, callback, user)
 }
-

@@ -18,4 +18,3 @@ call_delete_pk_i64_with_callback :: proc(connection: ^client.Connection, n: i64,
 call_delete_pk_i64_with_result_callback :: proc(connection: ^client.Connection, n: i64, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_pk_i_64", Delete_Pk_I_64_Args{n}, callback, user)
 }
-

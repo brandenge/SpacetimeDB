@@ -40,4 +40,3 @@ call_insert_large_table_with_callback :: proc(connection: ^client.Connection, a:
 call_insert_large_table_with_result_callback :: proc(connection: ^client.Connection, a: u8, b: u16, c: u32, d: u64, e: u128, f: host.U256, g: i8, h: i16, i: i32, j: i64, k: i128, l: host.I256, m: bool, n: f32, o: f64, p: string, q: SimpleEnum, r: EnumWithPayload, s: UnitStruct, t: ByteStruct, u: EveryPrimitiveStruct, v: EveryVecStruct, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_large_table", Insert_Large_Table_Args{a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v}, callback, user)
 }
-

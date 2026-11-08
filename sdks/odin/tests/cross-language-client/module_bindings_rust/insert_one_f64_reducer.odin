@@ -18,4 +18,3 @@ call_insert_one_f64_with_callback :: proc(connection: ^client.Connection, f: f64
 call_insert_one_f64_with_result_callback :: proc(connection: ^client.Connection, f: f64, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_one_f_64", Insert_One_F_64_Args{f}, callback, user)
 }
-

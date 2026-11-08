@@ -18,4 +18,3 @@ call_insert_one_i8_with_callback :: proc(connection: ^client.Connection, n: i8, 
 call_insert_one_i8_with_result_callback :: proc(connection: ^client.Connection, n: i8, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_one_i_8", Insert_One_I_8_Args{n}, callback, user)
 }
-

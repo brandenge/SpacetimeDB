@@ -18,4 +18,3 @@ call_insert_vec_u32_with_callback :: proc(connection: ^client.Connection, n: []u
 call_insert_vec_u32_with_result_callback :: proc(connection: ^client.Connection, n: []u32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_vec_u_32", Insert_Vec_U_32_Args{n}, callback, user)
 }
-

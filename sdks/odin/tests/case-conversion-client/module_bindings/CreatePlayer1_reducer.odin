@@ -19,4 +19,3 @@ call_CreatePlayer1_with_callback :: proc(connection: ^client.Connection, player_
 call_CreatePlayer1_with_result_callback :: proc(connection: ^client.Connection, player_1_name: string, start_2_level: u32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "create_player_1", Create_Player_1_Args{player_1_name, start_2_level}, callback, user)
 }
-

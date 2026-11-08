@@ -19,4 +19,3 @@ call_insert_into_pk_btree_u32_with_callback :: proc(connection: ^client.Connecti
 call_insert_into_pk_btree_u32_with_result_callback :: proc(connection: ^client.Connection, pk_u_32: []PkU32, bt_u_32: []BTreeU32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_into_pk_btree_u_32", Insert_Into_Pk_Btree_U_32_Args{pk_u_32, bt_u_32}, callback, user)
 }
-

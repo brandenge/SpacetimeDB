@@ -20,4 +20,3 @@ call_insert_unique_u32_update_pk_u32_with_callback :: proc(connection: ^client.C
 call_insert_unique_u32_update_pk_u32_with_result_callback :: proc(connection: ^client.Connection, n: u32, d_unique: i32, d_pk: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_unique_u_32_update_pk_u_32", Insert_Unique_U_32_Update_Pk_U_32_Args{n, d_unique, d_pk}, callback, user)
 }
-

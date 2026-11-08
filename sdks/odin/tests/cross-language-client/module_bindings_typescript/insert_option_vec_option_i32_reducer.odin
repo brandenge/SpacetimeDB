@@ -19,4 +19,3 @@ call_insert_option_vec_option_i32_with_callback :: proc(connection: ^client.Conn
 call_insert_option_vec_option_i32_with_result_callback :: proc(connection: ^client.Connection, v: runtime.Maybe([]runtime.Maybe(i32)), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_option_vec_option_i_32", Insert_Option_Vec_Option_I_32_Args{v}, callback, user)
 }
-

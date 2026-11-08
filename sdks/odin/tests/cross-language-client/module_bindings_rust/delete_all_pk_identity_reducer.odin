@@ -20,4 +20,3 @@ call_delete_all_pk_identity_with_callback :: proc(connection: ^client.Connection
 call_delete_all_pk_identity_with_result_callback :: proc(connection: ^client.Connection, i: host.Identity, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_pk_identity", Delete_All_Pk_Identity_Args{i, data}, callback, user)
 }
-

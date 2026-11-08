@@ -18,4 +18,3 @@ call_delete_all_one_every_primitive_struct_with_callback :: proc(connection: ^cl
 call_delete_all_one_every_primitive_struct_with_result_callback :: proc(connection: ^client.Connection, s: EveryPrimitiveStruct, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_one_every_primitive_struct", Delete_All_One_Every_Primitive_Struct_Args{s}, callback, user)
 }
-

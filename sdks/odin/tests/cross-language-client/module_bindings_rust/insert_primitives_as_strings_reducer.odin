@@ -18,4 +18,3 @@ call_insert_primitives_as_strings_with_callback :: proc(connection: ^client.Conn
 call_insert_primitives_as_strings_with_result_callback :: proc(connection: ^client.Connection, s: EveryPrimitiveStruct, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_primitives_as_strings", Insert_Primitives_As_Strings_Args{s}, callback, user)
 }
-

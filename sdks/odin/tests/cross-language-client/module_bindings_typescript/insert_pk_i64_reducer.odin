@@ -19,4 +19,3 @@ call_insert_pk_i64_with_callback :: proc(connection: ^client.Connection, n: i64,
 call_insert_pk_i64_with_result_callback :: proc(connection: ^client.Connection, n: i64, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_pk_i_64", Insert_Pk_I_64_Args{n, data}, callback, user)
 }
-

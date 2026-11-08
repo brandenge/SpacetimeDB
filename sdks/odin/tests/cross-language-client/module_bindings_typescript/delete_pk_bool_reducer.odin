@@ -18,4 +18,3 @@ call_delete_pk_bool_with_callback :: proc(connection: ^client.Connection, b: boo
 call_delete_pk_bool_with_result_callback :: proc(connection: ^client.Connection, b: bool, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_pk_bool", Delete_Pk_Bool_Args{b}, callback, user)
 }
-

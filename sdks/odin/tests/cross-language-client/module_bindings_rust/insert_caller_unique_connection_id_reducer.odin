@@ -18,4 +18,3 @@ call_insert_caller_unique_connection_id_with_callback :: proc(connection: ^clien
 call_insert_caller_unique_connection_id_with_result_callback :: proc(connection: ^client.Connection, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_caller_unique_connection_id", Insert_Caller_Unique_Connection_Id_Args{data}, callback, user)
 }
-

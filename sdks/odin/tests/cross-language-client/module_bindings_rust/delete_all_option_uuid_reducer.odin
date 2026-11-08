@@ -19,4 +19,3 @@ call_delete_all_option_uuid_with_callback :: proc(connection: ^client.Connection
 call_delete_all_option_uuid_with_result_callback :: proc(connection: ^client.Connection, u: runtime.Maybe(u128), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_option_uuid", Delete_All_Option_Uuid_Args{u}, callback, user)
 }
-

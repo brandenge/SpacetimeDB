@@ -20,4 +20,3 @@ call_insert_option_identity_with_callback :: proc(connection: ^client.Connection
 call_insert_option_identity_with_result_callback :: proc(connection: ^client.Connection, i: runtime.Maybe(host.Identity), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_option_identity", Insert_Option_Identity_Args{i}, callback, user)
 }
-

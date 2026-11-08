@@ -6570,4 +6570,3 @@ register_row_change_dispatcher :: proc(registry: ^client.Row_Change_Listener_Reg
 unregister_row_change_dispatcher :: proc(registry: ^client.Row_Change_Listener_Registry, id: client.Row_Change_Listener_Id) -> bool {
 	return client.row_change_listener_remove(registry, id)
 }
-

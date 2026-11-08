@@ -18,4 +18,3 @@ call_delete_pk_uuid_with_callback :: proc(connection: ^client.Connection, u: u12
 call_delete_pk_uuid_with_result_callback :: proc(connection: ^client.Connection, u: u128, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_pk_uuid", Delete_Pk_Uuid_Args{u}, callback, user)
 }
-

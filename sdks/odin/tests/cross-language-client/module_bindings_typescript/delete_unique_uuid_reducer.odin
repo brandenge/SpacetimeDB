@@ -18,4 +18,3 @@ call_delete_unique_uuid_with_callback :: proc(connection: ^client.Connection, u:
 call_delete_unique_uuid_with_result_callback :: proc(connection: ^client.Connection, u: u128, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_unique_uuid", Delete_Unique_Uuid_Args{u}, callback, user)
 }
-

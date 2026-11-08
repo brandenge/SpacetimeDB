@@ -806,6 +806,9 @@ pub fn generate_server_module_schema(module: &ModuleDef) -> anyhow::Result<Vec<O
         templates.filename = format!("module_schema/{package}/module_handler_templates.odin.txt");
         files.push(templates);
     }
+    for file in &mut files {
+        normalize_file_ending(file);
+    }
     Ok(files)
 }
 
@@ -1558,7 +1561,15 @@ fn generated_file(filename: String, uses: &Uses, body: &str) -> OutputFile {
     let mut code = String::from(HEADER);
     uses.write_imports(&mut code);
     code.push_str(body);
-    OutputFile { filename, code }
+    let mut file = OutputFile { filename, code };
+    normalize_file_ending(&mut file);
+    file
+}
+
+fn normalize_file_ending(file: &mut OutputFile) {
+    let content_length = file.code.trim_end_matches('\n').len();
+    file.code.truncate(content_length);
+    file.code.push('\n');
 }
 
 fn client_submodule_file(module: &ModuleDef, mut file: OutputFile) -> OutputFile {
@@ -2140,6 +2151,9 @@ impl Lang for Odin {
                     );
                 }
             }
+        }
+        for file in &mut files {
+            normalize_file_ending(file);
         }
         files
     }

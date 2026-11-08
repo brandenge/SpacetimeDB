@@ -19,4 +19,3 @@ call_insert_result_identity_string_with_callback :: proc(connection: ^client.Con
 call_insert_result_identity_string_with_result_callback :: proc(connection: ^client.Connection, r: host.Result(host.Identity, string), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_result_identity_string", Insert_Result_Identity_String_Args{r}, callback, user)
 }
-

@@ -18,4 +18,3 @@ call_delete_all_vec_bool_with_callback :: proc(connection: ^client.Connection, b
 call_delete_all_vec_bool_with_result_callback :: proc(connection: ^client.Connection, b: []bool, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_vec_bool", Delete_All_Vec_Bool_Args{b}, callback, user)
 }
-

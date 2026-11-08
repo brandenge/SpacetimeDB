@@ -19,4 +19,3 @@ call_delete_all_one_timestamp_with_callback :: proc(connection: ^client.Connecti
 call_delete_all_one_timestamp_with_result_callback :: proc(connection: ^client.Connection, t: host.Timestamp, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_one_timestamp", Delete_All_One_Timestamp_Args{t}, callback, user)
 }
-

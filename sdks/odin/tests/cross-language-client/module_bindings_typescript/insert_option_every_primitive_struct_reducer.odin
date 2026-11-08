@@ -19,4 +19,3 @@ call_insert_option_every_primitive_struct_with_callback :: proc(connection: ^cli
 call_insert_option_every_primitive_struct_with_result_callback :: proc(connection: ^client.Connection, s: runtime.Maybe(EveryPrimitiveStruct), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_option_every_primitive_struct", Insert_Option_Every_Primitive_Struct_Args{s}, callback, user)
 }
-

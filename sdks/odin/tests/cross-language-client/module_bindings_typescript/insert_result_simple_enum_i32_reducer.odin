@@ -19,4 +19,3 @@ call_insert_result_simple_enum_i32_with_callback :: proc(connection: ^client.Con
 call_insert_result_simple_enum_i32_with_result_callback :: proc(connection: ^client.Connection, r: host.Result(SimpleEnum, i32), callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_result_simple_enum_i_32", Insert_Result_Simple_Enum_I_32_Args{r}, callback, user)
 }
-

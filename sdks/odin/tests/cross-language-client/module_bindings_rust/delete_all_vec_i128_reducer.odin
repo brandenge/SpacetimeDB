@@ -18,4 +18,3 @@ call_delete_all_vec_i128_with_callback :: proc(connection: ^client.Connection, n
 call_delete_all_vec_i128_with_result_callback :: proc(connection: ^client.Connection, n: []i128, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_vec_i_128", Delete_All_Vec_I_128_Args{n}, callback, user)
 }
-

@@ -19,4 +19,3 @@ call_insert_unique_string_with_callback :: proc(connection: ^client.Connection, 
 call_insert_unique_string_with_result_callback :: proc(connection: ^client.Connection, s: string, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_unique_string", Insert_Unique_String_Args{s, data}, callback, user)
 }
-

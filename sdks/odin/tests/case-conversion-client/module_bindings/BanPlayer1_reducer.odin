@@ -19,4 +19,3 @@ call_BanPlayer1_with_callback :: proc(connection: ^client.Connection, player_1_i
 call_BanPlayer1_with_result_callback :: proc(connection: ^client.Connection, player_1_id: u32, ban_until_6: u32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "banPlayer1", Ban_Player_1_Args{player_1_id, ban_until_6}, callback, user)
 }
-

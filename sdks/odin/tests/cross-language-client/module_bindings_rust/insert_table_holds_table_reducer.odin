@@ -19,4 +19,3 @@ call_insert_table_holds_table_with_callback :: proc(connection: ^client.Connecti
 call_insert_table_holds_table_with_result_callback :: proc(connection: ^client.Connection, a: OneU8, b: VecU8, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_table_holds_table", Insert_Table_Holds_Table_Args{a, b}, callback, user)
 }
-

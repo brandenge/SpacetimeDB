@@ -19,4 +19,3 @@ call_delete_all_pk_string_with_callback :: proc(connection: ^client.Connection, 
 call_delete_all_pk_string_with_result_callback :: proc(connection: ^client.Connection, s: string, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_pk_string", Delete_All_Pk_String_Args{s, data}, callback, user)
 }
-

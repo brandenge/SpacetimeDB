@@ -20,4 +20,3 @@ call_delete_all_unique_i256_with_callback :: proc(connection: ^client.Connection
 call_delete_all_unique_i256_with_result_callback :: proc(connection: ^client.Connection, n: host.I256, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "delete_all_unique_i_256", Delete_All_Unique_I_256_Args{n, data}, callback, user)
 }
-

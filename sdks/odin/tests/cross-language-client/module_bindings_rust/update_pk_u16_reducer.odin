@@ -19,4 +19,3 @@ call_update_pk_u16_with_callback :: proc(connection: ^client.Connection, n: u16,
 call_update_pk_u16_with_result_callback :: proc(connection: ^client.Connection, n: u16, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "update_pk_u_16", Update_Pk_U_16_Args{n, data}, callback, user)
 }
-

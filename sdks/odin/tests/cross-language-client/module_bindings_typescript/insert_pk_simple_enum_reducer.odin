@@ -19,4 +19,3 @@ call_insert_pk_simple_enum_with_callback :: proc(connection: ^client.Connection,
 call_insert_pk_simple_enum_with_result_callback :: proc(connection: ^client.Connection, a: SimpleEnum, data: i32, callback: client.Reducer_Result_Callback, user: rawptr = nil) -> (request_id: u32, err: client.Error) {
 	return client.call_reducer_with_result_callback(connection, "insert_pk_simple_enum", Insert_Pk_Simple_Enum_Args{a, data}, callback, user)
 }
-
