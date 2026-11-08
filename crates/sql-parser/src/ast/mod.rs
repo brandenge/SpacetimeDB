@@ -86,12 +86,15 @@ pub enum Project {
     Exprs(Vec<ProjectElem>),
     /// SELECT COUNT(*)
     Count(SqlIdent),
+    /// SELECT SUM(column)
+    Sum(ProjectExpr, SqlIdent),
 }
 
 impl Project {
     pub fn qualify_vars(self, with: SqlIdent) -> Self {
         match self {
             Self::Star(..) | Self::Count(..) => self,
+            Self::Sum(expr, alias) => Self::Sum(expr.qualify_vars(with), alias),
             Self::Exprs(elems) => Self::Exprs(elems.into_iter().map(|elem| elem.qualify_vars(with.clone())).collect()),
         }
     }
@@ -101,6 +104,7 @@ impl Project {
             Self::Exprs(exprs) => exprs
                 .iter()
                 .any(|ProjectElem(expr, _)| matches!(expr, ProjectExpr::Var(_))),
+            Self::Sum(ProjectExpr::Var(_), _) => true,
             _ => false,
         }
     }

@@ -542,6 +542,45 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_sum() -> ResultTest<()> {
+        let (db, _) = create_data(5)?;
+
+        let result = run_for_testing(&db, "SELECT SUM(inventory_id) AS total FROM inventory")?;
+        assert_eq!(
+            result,
+            vec![product![spacetimedb_lib::AlgebraicValue::OptionSome(15u64.into())]]
+        );
+
+        let result = run_for_testing(
+            &db,
+            "SELECT SUM(inventory_id) AS total FROM inventory WHERE inventory_id > 3",
+        )?;
+        assert_eq!(
+            result,
+            vec![product![spacetimedb_lib::AlgebraicValue::OptionSome(9u64.into())]]
+        );
+
+        let (empty_db, _) = create_data(0)?;
+        let result = run_for_testing(&empty_db, "SELECT SUM(inventory_id) AS total FROM inventory")?;
+        assert_eq!(result, vec![product![spacetimedb_lib::AlgebraicValue::OptionNone()]]);
+
+        let overflow_db = TestDB::durable()?;
+        let overflow_rows = [product!(250u8), product!(10u8)];
+        with_auto_commit(&overflow_db, |tx| {
+            create_table_with_rows(
+                &overflow_db,
+                tx,
+                "small_numbers",
+                ProductType::from([("value", AlgebraicType::U8)]),
+                &overflow_rows,
+                StAccess::Public,
+            )
+        })?;
+        assert!(run_for_testing(&overflow_db, "SELECT SUM(value) AS total FROM small_numbers").is_err());
+        Ok(())
+    }
+
     /// Test the evaluation of SELECT, UPDATE, and DELETE parameterized with `:sender`
     #[test]
     fn test_sender_param() -> ResultTest<()> {
@@ -1859,6 +1898,30 @@ pub(crate) mod tests {
         );
         check(db.clone(), "DELETE FROM T", internal_auth, del)?;
 
+        Ok(())
+    }
+
+    #[test]
+    fn one_off_sql_orders_projected_rows_before_limit() -> ResultTest<()> {
+        let db = TestDB::durable()?;
+        let table_id = db.create_table_for_test("ordered", &[("value", AlgebraicType::U8)], &[])?;
+        with_auto_commit(&db, |tx| -> Result<_, DBError> {
+            for value in [1u8, 4, 2, 3] {
+                insert(&db, tx, table_id, &product!(value))?;
+            }
+            Ok(())
+        })?;
+
+        let runtime = db.runtime().expect("runtime should be there");
+        let result = runtime.block_on(run(
+            db.clone(),
+            "SELECT value FROM ordered ORDER BY value DESC LIMIT 2".to_string(),
+            AuthCtx::for_testing(),
+            None,
+            None,
+            &mut vec![],
+        ))?;
+        assert_eq!(result.rows, vec![product![4u8], product![3u8]]);
         Ok(())
     }
 }

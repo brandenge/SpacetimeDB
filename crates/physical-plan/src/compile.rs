@@ -33,6 +33,7 @@ fn compile_project_list(var: &mut impl VarLabel, expr: ProjectList) -> ProjectLi
         ProjectList::Name(proj) => {
             ProjectListPlan::Name(proj.into_iter().map(|proj| compile_project_name(var, proj)).collect())
         }
+        ProjectList::OrderBy(input, _) => compile_project_list(var, *input),
         ProjectList::Limit(input, n) => ProjectListPlan::Limit(Box::new(compile_project_list(var, *input)), n),
         ProjectList::Agg(expr, agg, ..) => {
             ProjectListPlan::Agg(expr.into_iter().map(|expr| compile_rel_expr(var, expr)).collect(), agg)

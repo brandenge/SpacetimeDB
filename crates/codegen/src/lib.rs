@@ -4,12 +4,14 @@ use spacetimedb_schema::schema::{Schema, TableSchema};
 mod code_indenter;
 pub mod cpp;
 pub mod csharp;
+pub mod odin;
 pub mod rust;
 pub mod typescript;
 pub mod unrealcpp;
 mod util;
 
 pub use self::csharp::Csharp;
+pub use self::odin::Odin;
 pub use self::rust::Rust;
 pub use self::typescript::{ImportExtension, TypeScript};
 pub use self::unrealcpp::UnrealCpp;
@@ -34,6 +36,7 @@ impl Default for CodegenOptions {
 pub enum ReceiverLanguage<'a> {
     Rust,
     TypeScript,
+    Odin,
     Csharp { namespace: &'a str },
     Cpp,
 }
@@ -49,6 +52,7 @@ pub fn generate_receiver_bindings(
     match lang {
         ReceiverLanguage::Rust => Ok(rust::generate_rust_module_bindings(module, dependency_name)),
         ReceiverLanguage::TypeScript => Ok(typescript::generate_module_bindings(module, dependency_name)),
+        ReceiverLanguage::Odin => Ok(odin::generate_module_bindings(module, dependency_name)),
         ReceiverLanguage::Csharp { .. } => {
             // TODO(idc-csharp): Generate C# receiver types and reducer handles in the configured namespace.
             anyhow::bail!("C# receiver binding generation is not implemented yet")

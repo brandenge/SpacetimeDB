@@ -6,11 +6,11 @@ use spacetimedb_execution::{
 };
 use spacetimedb_expr::{
     check::{parse_and_type_sub, SchemaView},
-    expr::ProjectList,
+    expr::{ProjectList, SortKey},
     rls::{resolve_views_for_sql, resolve_views_for_sub},
     statement::{parse_and_type_sql, Statement, DML},
 };
-use spacetimedb_lib::{identity::AuthCtx, metrics::ExecutionMetrics, ProductValue};
+use spacetimedb_lib::{identity::AuthCtx, metrics::ExecutionMetrics, AlgebraicValue, ProductValue};
 use spacetimedb_physical_plan::{
     compile::{compile_dml_plan, compile_select, compile_select_list},
     plan::{ProjectListPlan, ProjectPlan},
@@ -83,6 +83,7 @@ pub fn execute_select_stmt<Tx: Datastore + DeltaStore>(
     metrics: &mut ExecutionMetrics,
     check_row_limit: impl Fn(ProjectListPlan) -> Result<ProjectListPlan>,
 ) -> Result<Vec<ProductValue>> {
+    let (stmt, sort_keys, limit) = extract_order_by(stmt);
     let plan = compile_select_list(stmt).optimize()?;
     let plan = check_row_limit(plan)?;
     let plan = ProjectListExecutor::from(plan);
@@ -92,7 +93,118 @@ pub fn execute_select_stmt<Tx: Datastore + DeltaStore>(
         rows.push(row);
         Ok(())
     })?;
+    if !sort_keys.is_empty() {
+        sort_query_rows(&mut rows, &sort_keys);
+    }
+    if let Some(limit) = limit {
+        rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    }
     Ok(rows)
+}
+
+fn extract_order_by(project: ProjectList) -> (ProjectList, Vec<SortKey>, Option<u64>) {
+    match project {
+        ProjectList::OrderBy(input, mut sort_keys) => {
+            let (input, mut inner_sort_keys, limit) = extract_order_by(*input);
+            sort_keys.append(&mut inner_sort_keys);
+            (input, sort_keys, limit)
+        }
+        ProjectList::Limit(input, limit) => {
+            let (input, sort_keys, inner_limit) = extract_order_by(*input);
+            if sort_keys.is_empty() {
+                (ProjectList::Limit(Box::new(input), limit), sort_keys, inner_limit)
+            } else {
+                (input, sort_keys, Some(limit))
+            }
+        }
+        other => (other, Vec::new(), None),
+    }
+}
+
+fn compare_query_rows(left: &ProductValue, right: &ProductValue, sort_keys: &[SortKey]) -> std::cmp::Ordering {
+    for key in sort_keys {
+        let index = key.field_index as usize;
+        let Some(left_value) = left.elements.get(index) else {
+            continue;
+        };
+        let Some(right_value) = right.elements.get(index) else {
+            continue;
+        };
+        if key.nullable {
+            let left_null = matches!(left_value, AlgebraicValue::Sum(sum) if sum.tag == 1);
+            let right_null = matches!(right_value, AlgebraicValue::Sum(sum) if sum.tag == 1);
+            if left_null != right_null {
+                return if left_null == key.nulls_first {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                };
+            }
+        }
+        let ordering = left_value.cmp(right_value);
+        if ordering != std::cmp::Ordering::Equal {
+            return if key.ascending { ordering } else { ordering.reverse() };
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn sort_query_rows(rows: &mut [ProductValue], sort_keys: &[SortKey]) {
+    rows.sort_by(|left, right| compare_query_rows(left, right, sort_keys));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sorts_projected_rows_by_multiple_keys_and_direction() {
+        let mut rows = vec![
+            ProductValue::from(vec![AlgebraicValue::U32(2), AlgebraicValue::U32(1)]),
+            ProductValue::from(vec![AlgebraicValue::U32(1), AlgebraicValue::U32(3)]),
+            ProductValue::from(vec![AlgebraicValue::U32(1), AlgebraicValue::U32(2)]),
+        ];
+        sort_query_rows(
+            &mut rows,
+            &[
+                SortKey {
+                    field_index: 0,
+                    ascending: true,
+                    nulls_first: false,
+                    nullable: false,
+                },
+                SortKey {
+                    field_index: 1,
+                    ascending: false,
+                    nulls_first: true,
+                    nullable: false,
+                },
+            ],
+        );
+        assert_eq!(rows[0].elements[0], AlgebraicValue::U32(1));
+        assert_eq!(rows[0].elements[1], AlgebraicValue::U32(3));
+        assert_eq!(rows[1].elements[0], AlgebraicValue::U32(1));
+        assert_eq!(rows[1].elements[1], AlgebraicValue::U32(2));
+        assert_eq!(rows[2].elements[0], AlgebraicValue::U32(2));
+    }
+
+    #[test]
+    fn honors_explicit_null_ordering() {
+        let mut rows = vec![
+            ProductValue::from(vec![AlgebraicValue::enum_simple(0)]),
+            ProductValue::from(vec![AlgebraicValue::enum_simple(1)]),
+        ];
+        sort_query_rows(
+            &mut rows,
+            &[SortKey {
+                field_index: 0,
+                ascending: true,
+                nulls_first: true,
+                nullable: true,
+            }],
+        );
+        assert!(matches!(rows[0].elements[0], AlgebraicValue::Sum(ref sum) if sum.tag == 1));
+    }
 }
 
 /// A utility for executing a sql dml statement

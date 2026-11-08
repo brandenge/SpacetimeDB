@@ -8,8 +8,8 @@ use itertools::Either;
 use spacetimedb_expr::expr::AggType;
 use spacetimedb_lib::{metrics::ExecutionMetrics, query::Delta, sats::size_of::SizeOf, AlgebraicValue, ProductValue};
 use spacetimedb_physical_plan::plan::{
-    HashJoin, IndexProbe, IxJoin, IxScan, ParamResolver, PhysicalExpr, PhysicalPlan, ProjectField, ProjectListPlan,
-    ProjectPlan, Semi, TableScan, TupleField,
+    HashJoin, IndexProbe, IxJoin, IxScan, Label, ParamResolver, PhysicalExpr, PhysicalPlan, ProjectField,
+    ProjectListPlan, ProjectPlan, Semi, TableScan, TupleField,
 };
 use spacetimedb_primitives::{ColList, IndexId, TableId};
 use spacetimedb_sats::product;
@@ -72,6 +72,9 @@ impl From<ProjectListPlan> for ProjectListExecutor {
             ProjectListPlan::Limit(plan, n) => Self::Limit(Box::new((*plan).into()), n),
             ProjectListPlan::Agg(plan, AggType::Count) => {
                 Self::Agg(plan.into_iter().map(PipelinedExecutor::from).collect(), AggType::Count)
+            }
+            ProjectListPlan::Agg(plan, agg @ AggType::Sum { .. }) => {
+                Self::Agg(plan.into_iter().map(PipelinedExecutor::from).collect(), agg)
             }
         }
     }
@@ -146,11 +149,58 @@ impl ProjectListExecutor {
                 }
                 f(product![n as u64])?;
             }
+            Self::Agg(plans, AggType::Sum { field, .. }) => {
+                let projected_field = TupleField {
+                    label: Label(0),
+                    label_pos: None,
+                    field_pos: *field,
+                };
+                let mut sum = None;
+                for plan in plans {
+                    plan.execute(tx, params, metrics, &mut |tuple| {
+                        n += 1;
+                        let value = tuple.project(&projected_field);
+                        bytes_scanned += value.size_of();
+                        sum = Some(match sum.take() {
+                            Some(total) => checked_sum_values(total, value)?,
+                            None => value,
+                        });
+                        Ok(())
+                    })?;
+                }
+                let value = sum
+                    .map(AlgebraicValue::OptionSome)
+                    .unwrap_or_else(AlgebraicValue::OptionNone);
+                f(product![value])?;
+            }
         }
         metrics.rows_scanned += n;
         metrics.bytes_scanned += bytes_scanned;
         Ok(())
     }
+}
+
+fn checked_sum_values(left: AlgebraicValue, right: AlgebraicValue) -> Result<AlgebraicValue> {
+    let result = match (left, right) {
+        (AlgebraicValue::I8(left), AlgebraicValue::I8(right)) => left.checked_add(right).map(AlgebraicValue::I8),
+        (AlgebraicValue::U8(left), AlgebraicValue::U8(right)) => left.checked_add(right).map(AlgebraicValue::U8),
+        (AlgebraicValue::I16(left), AlgebraicValue::I16(right)) => left.checked_add(right).map(AlgebraicValue::I16),
+        (AlgebraicValue::U16(left), AlgebraicValue::U16(right)) => left.checked_add(right).map(AlgebraicValue::U16),
+        (AlgebraicValue::I32(left), AlgebraicValue::I32(right)) => left.checked_add(right).map(AlgebraicValue::I32),
+        (AlgebraicValue::U32(left), AlgebraicValue::U32(right)) => left.checked_add(right).map(AlgebraicValue::U32),
+        (AlgebraicValue::I64(left), AlgebraicValue::I64(right)) => left.checked_add(right).map(AlgebraicValue::I64),
+        (AlgebraicValue::U64(left), AlgebraicValue::U64(right)) => left.checked_add(right).map(AlgebraicValue::U64),
+        (AlgebraicValue::I128(left), AlgebraicValue::I128(right)) => left
+            .0
+            .checked_add(right.0)
+            .map(|value| AlgebraicValue::I128(value.into())),
+        (AlgebraicValue::U128(left), AlgebraicValue::U128(right)) => left
+            .0
+            .checked_add(right.0)
+            .map(|value| AlgebraicValue::U128(value.into())),
+        _ => anyhow::bail!("SUM encountered a value that does not match its integer column type"),
+    };
+    result.ok_or_else(|| anyhow::anyhow!("SUM overflow"))
 }
 
 /// An executor for a query that returns rows from a view.

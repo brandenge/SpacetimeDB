@@ -78,6 +78,10 @@ pub fn resolve_views_for_sql(tx: &impl SchemaView, expr: ProjectList, auth: &Aut
     };
     match expr {
         ProjectList::Limit(expr, n) => Ok(ProjectList::Limit(Box::new(resolve_views_for_sql(tx, *expr, auth)?), n)),
+        ProjectList::OrderBy(expr, sort_keys) => Ok(ProjectList::OrderBy(
+            Box::new(resolve_views_for_sql(tx, *expr, auth)?),
+            sort_keys,
+        )),
         ProjectList::Name(exprs) => Ok(ProjectList::Name(
             exprs
                 .into_iter()
@@ -106,6 +110,18 @@ pub fn resolve_views_for_sql(tx: &impl SchemaView, expr: ProjectList, auth: &Aut
                 .flatten()
                 .collect(),
             AggType::Count,
+            name,
+            ty,
+        )),
+        ProjectList::Agg(exprs, agg @ AggType::Sum { .. }, name, ty) => Ok(ProjectList::Agg(
+            exprs
+                .into_iter()
+                .map(resolve_for_sql)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect(),
+            agg,
             name,
             ty,
         )),

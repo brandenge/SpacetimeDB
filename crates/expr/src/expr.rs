@@ -182,18 +182,28 @@ pub enum ProjectList {
     Name(Vec<ProjectName>),
     List(Vec<RelExpr>, Vec<(RawIdentifier, FieldProject)>),
     Limit(Box<ProjectList>, u64),
+    OrderBy(Box<ProjectList>, Vec<SortKey>),
     Agg(Vec<RelExpr>, AggType, RawIdentifier, AlgebraicType),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SortKey {
+    pub field_index: u32,
+    pub ascending: bool,
+    pub nulls_first: bool,
+    pub nullable: bool,
 }
 
 #[derive(Debug)]
 pub enum AggType {
     Count,
+    Sum { field: usize, ty: AlgebraicType },
 }
 
 impl CollectViews for ProjectList {
     fn collect_views(&self, views: &mut HashSet<ViewCall>) {
         match self {
-            Self::Limit(proj, _) => {
+            Self::Limit(proj, _) | Self::OrderBy(proj, _) => {
                 proj.collect_views(views);
             }
             Self::Name(exprs) => {
@@ -217,7 +227,7 @@ impl ProjectList {
             Self::List(exprs, _) | Self::Agg(exprs, ..) => {
                 exprs.iter_mut().for_each(|expr| expr.bind_view_arg_hashes(caller))
             }
-            Self::Limit(input, _) => input.bind_view_arg_hashes(caller),
+            Self::Limit(input, _) | Self::OrderBy(input, _) => input.bind_view_arg_hashes(caller),
         }
     }
 
@@ -227,7 +237,7 @@ impl ProjectList {
     pub fn return_table(&self) -> Option<&TableOrViewSchema> {
         match self {
             Self::Name(project) => project.first().and_then(|expr| expr.return_table()),
-            Self::Limit(input, _) => input.return_table(),
+            Self::Limit(input, _) | Self::OrderBy(input, _) => input.return_table(),
             Self::List(..) | Self::Agg(..) => None,
         }
     }
@@ -238,7 +248,7 @@ impl ProjectList {
     pub fn return_table_id(&self) -> Option<TableId> {
         match self {
             Self::Name(project) => project.first().and_then(|expr| expr.return_table_id()),
-            Self::Limit(input, _) => input.return_table_id(),
+            Self::Limit(input, _) | Self::OrderBy(input, _) => input.return_table_id(),
             Self::List(..) | Self::Agg(..) => None,
         }
     }
@@ -251,7 +261,7 @@ impl ProjectList {
                     .first()
                     .inspect(|expr| expr.for_each_return_field(|n, at| f(n.as_raw(), at)));
             }
-            Self::Limit(input, _) => {
+            Self::Limit(input, _) | Self::OrderBy(input, _) => {
                 input.for_each_return_field(f);
             }
             Self::List(_, fields) => {

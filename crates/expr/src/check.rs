@@ -264,7 +264,7 @@ fn view_call_name(expr: &ProjectList) -> Option<TableName> {
             .iter()
             .for_each(|(ProjectName::None(expr) | ProjectName::Some(expr, _))| visit(expr)),
         ProjectList::List(exprs, _) | ProjectList::Agg(exprs, ..) => exprs.iter().for_each(visit),
-        ProjectList::Limit(input, _) => return view_call_name(input),
+        ProjectList::Limit(input, _) | ProjectList::OrderBy(input, _) => return view_call_name(input),
     }
     name
 }
@@ -275,7 +275,7 @@ fn expect_table_type(expr: ProjectList) -> TypingResult<ProjectName> {
         // Note, this is called before we do any RLS resolution.
         // Hence this length should always be 1.
         ProjectList::Name(mut proj) if proj.len() == 1 => Ok(proj.pop().unwrap()),
-        ProjectList::Limit(input, _) => expect_table_type(*input),
+        ProjectList::Limit(input, _) | ProjectList::OrderBy(input, _) => expect_table_type(*input),
         ProjectList::Name(..) | ProjectList::List(..) | ProjectList::Agg(..) => Err(Unsupported::ReturnType.into()),
     }
 }

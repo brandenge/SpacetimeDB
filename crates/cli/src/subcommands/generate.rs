@@ -7,7 +7,7 @@ use clap::ArgAction::{Set, SetTrue};
 use fs_err as fs;
 use spacetimedb_codegen::{
     generate, generate_receiver_bindings, private_table_names, CodegenOptions, CodegenVisibility, Csharp,
-    ImportExtension, Lang, OutputFile, ReceiverLanguage, Rust, TypeScript, UnrealCpp, AUTO_GENERATED_PREFIX,
+    ImportExtension, Lang, Odin, OutputFile, ReceiverLanguage, Rust, TypeScript, UnrealCpp, AUTO_GENERATED_PREFIX,
 };
 use spacetimedb_lib::de::serde::DeserializeWrapper;
 use spacetimedb_lib::RawModuleDef;
@@ -387,7 +387,7 @@ pub fn cli() -> clap::Command {
                 .long("bindings")
                 .value_parser(clap::value_parser!(BindingKind))
                 .default_value("client")
-                .help("The kind of bindings to generate (client applications or inter-database module calls)"),
+                .help("Bindings target: client SDK, inter-database module calls, or local server module schema"),
         )
         .arg(
             Arg::new("build_options")
@@ -488,13 +488,15 @@ fn prepare_generate_run_configs<'a>(
             parse_optional_dotnet_version(dotnet_version.as_deref())?
         };
 
+        if bindings == BindingKind::Server && requested_lang.is_some_and(|lang| lang != Language::Odin) {
+            anyhow::bail!("--bindings server currently requires --lang odin");
+        }
         if bindings == BindingKind::Module && requested_lang == Some(Language::UnrealCpp) {
             anyhow::bail!("Unreal C++ is a client binding target; use --lang cpp for module bindings");
         }
         if bindings == BindingKind::Client && requested_lang == Some(Language::Cpp) {
             anyhow::bail!("--lang cpp requires --bindings module; use --lang unrealcpp for Unreal client bindings");
         }
-
         // Validate Unreal-specific args first to preserve focused errors for this mode.
         if requested_lang == Some(Language::UnrealCpp) {
             if command_config.get_one::<PathBuf>("uproject_dir")?.is_none() {
@@ -526,8 +528,13 @@ fn prepare_generate_run_configs<'a>(
                     ModuleLanguage::Javascript => Language::TypeScript,
                     ModuleLanguage::Csharp => Language::Csharp,
                     ModuleLanguage::Cpp => Language::Cpp,
+                    ModuleLanguage::Odin => Language::Odin,
                 }
             }
+            None if bindings == BindingKind::Server => match detect_module_language(&project_path)? {
+                ModuleLanguage::Odin => Language::Odin,
+                _ => anyhow::bail!("--bindings server currently requires an Odin module source"),
+            },
             None => {
                 let client_project_dir = config_dir.unwrap_or_else(|| Path::new("."));
                 let detected = detect_default_language(client_project_dir)?;
@@ -540,10 +547,14 @@ fn prepare_generate_run_configs<'a>(
             }
         };
 
-        let out_dir = if bindings == BindingKind::Module {
+        let out_dir = if bindings == BindingKind::Server {
+            command_config
+                .get_resolved_path("out_dir", config_dir)?
+                .unwrap_or_else(|| project_path.clone())
+        } else if bindings == BindingKind::Module {
             let default_dir = match lang {
                 Language::Rust | Language::TypeScript => "src/remote_bindings",
-                Language::Csharp | Language::Cpp => "remote_bindings",
+                Language::Csharp | Language::Cpp | Language::Odin => "remote_bindings",
                 Language::UnrealCpp => unreachable!("Unreal module bindings rejected above"),
             };
             command_config
@@ -616,6 +627,14 @@ fn detect_default_language(client_project_dir: &Path) -> anyhow::Result<Language
         return Ok(Language::Csharp);
     }
 
+    if let Ok(entries) = fs::read_dir(client_project_dir)
+        && entries
+            .flatten()
+            .any(|entry| entry.path().extension().is_some_and(|e| e == "odin"))
+    {
+        return Ok(Language::Odin);
+    }
+
     anyhow::bail!(
         "Could not auto-detect client language from '{}'. \
          If this is not correct, pass --lang or add a generate target in spacetime.json.",
@@ -630,13 +649,14 @@ fn language_cli_name(lang: Language) -> &'static str {
         Language::TypeScript => "typescript",
         Language::UnrealCpp => "unrealcpp",
         Language::Cpp => "cpp",
+        Language::Odin => "odin",
     }
 }
 
 pub fn default_out_dir_for_language(lang: Language) -> Option<PathBuf> {
     match lang {
         Language::Rust | Language::TypeScript => Some(PathBuf::from("src/module_bindings")),
-        Language::Csharp => Some(PathBuf::from("module_bindings")),
+        Language::Csharp | Language::Odin => Some(PathBuf::from("module_bindings")),
         Language::UnrealCpp | Language::Cpp => None,
     }
 }
@@ -716,6 +736,110 @@ fn write_remote_bindings_mod(out_dir: &Path, dependency_name: &str) -> anyhow::R
     Ok(())
 }
 
+fn odin_declared_names(node: tree_sitter::Node<'_>, source: &str, names: &mut BTreeSet<String>) {
+    if matches!(
+        node.kind(),
+        "procedure_declaration"
+            | "overloaded_procedure_declaration"
+            | "const_declaration"
+            | "const_type_declaration"
+            | "variable_declaration"
+            | "var_declaration"
+            | "struct_declaration"
+            | "union_declaration"
+            | "enum_declaration"
+    ) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if matches!(child.kind(), "::" | ":=" | ":") {
+                break;
+            }
+            if child.kind() == "identifier"
+                && let Ok(name) = child.utf8_text(source.as_bytes())
+            {
+                names.insert(name.to_string());
+            }
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        odin_declared_names(child, source, names);
+    }
+}
+
+fn add_missing_odin_handlers(path: &Path, generated: &str) -> anyhow::Result<Option<PathBuf>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_odin::LANGUAGE.into())?;
+    let tree = parser
+        .parse(generated, None)
+        .context("could not parse generated Odin handlers")?;
+    anyhow::ensure!(
+        !tree.root_node().has_error(),
+        "generated Odin handlers contain syntax errors"
+    );
+    let mut cursor = tree.root_node().walk();
+    let declarations = tree.root_node().named_children(&mut cursor).collect::<Vec<_>>();
+    let package = declarations
+        .iter()
+        .find(|node| node.kind() == "package_declaration")
+        .and_then(|node| node.named_child(0))
+        .context("generated Odin handlers have no package declaration")?
+        .utf8_text(generated.as_bytes())?;
+
+    let directory = path.parent().context("handler file has no parent directory")?;
+    let mut declared = BTreeSet::new();
+    for entry in fs::read_dir(directory)? {
+        let candidate = entry?.path();
+        if candidate.extension().is_none_or(|extension| extension != "odin") || !candidate.is_file() {
+            continue;
+        }
+        let source = fs::read_to_string(&candidate)?;
+        let tree = parser.parse(&source, None).context("could not parse Odin source")?;
+        anyhow::ensure!(!tree.root_node().has_error(), "could not parse {}", candidate.display());
+        odin_declared_names(tree.root_node(), &source, &mut declared);
+    }
+
+    let mut missing = Vec::new();
+    for node in declarations {
+        if node.kind() != "procedure_declaration" {
+            continue;
+        }
+        let mut cursor = node.walk();
+        let name = node
+            .named_children(&mut cursor)
+            .find(|child| child.kind() == "identifier")
+            .context("generated handler has no name")?
+            .utf8_text(generated.as_bytes())?;
+        if !declared.contains(name) {
+            missing.push(node.utf8_text(generated.as_bytes())?);
+        }
+    }
+    if missing.is_empty() {
+        return Ok(None);
+    }
+    let body = format!(
+        "// USER-OWNED FILE: edit these handlers; server schema generation preserves this file.\n\npackage {package}\n\nimport \"stdb:host\"\n\n{}\n",
+        missing.join("\n\n")
+    );
+    for index in 0.. {
+        let added = if index == 0 {
+            path.to_path_buf()
+        } else {
+            directory.join(format!("module_handlers_added_{index}.odin"))
+        };
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&added) {
+            Ok(mut file) => {
+                std::io::Write::write_all(&mut file, body.as_bytes())?;
+                return Ok(Some(added));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!()
+}
+
 pub async fn run_prepared_generate_configs(
     run_configs: Vec<GenerateRunConfig>,
     extract_descriptions: ExtractDescriptions,
@@ -776,7 +900,12 @@ pub async fn run_prepared_generate_configs(
             options.visibility = CodegenVisibility::IncludePrivate;
         }
 
-        let generated_files = if run.bindings == BindingKind::Module {
+        let generated_files = if run.bindings == BindingKind::Server {
+            if run.lang != Language::Odin {
+                anyhow::bail!("--bindings server currently requires --lang odin");
+            }
+            spacetimedb_codegen::odin::generate_server_module_schema(&module)?
+        } else if run.bindings == BindingKind::Module {
             let lang = match run.lang {
                 Language::Rust => ReceiverLanguage::Rust,
                 Language::TypeScript => ReceiverLanguage::TypeScript,
@@ -784,6 +913,7 @@ pub async fn run_prepared_generate_configs(
                     namespace: &run.namespace,
                 },
                 Language::Cpp => ReceiverLanguage::Cpp,
+                Language::Odin => ReceiverLanguage::Odin,
                 Language::UnrealCpp => anyhow::bail!("Unreal C++ is a client binding target"),
             };
             let files = generate_receiver_bindings(&module, lang, run.dependency_name.as_deref())?;
@@ -818,6 +948,7 @@ pub async fn run_prepared_generate_configs(
                     &unreal_cpp_lang as &dyn Lang
                 }
                 Language::Rust => &Rust,
+                Language::Odin => &Odin,
                 Language::TypeScript => {
                     typescript_lang = TypeScript {
                         import_extension: run.import_extension.unwrap_or_default(),
@@ -839,6 +970,26 @@ pub async fn run_prepared_generate_configs(
                 fs::create_dir_all(run.out_dir.join(parent))?;
             }
             let path = run.out_dir.join(fname);
+            if run.bindings == BindingKind::Server
+                && fname.starts_with("module_schema")
+                && fname.file_name().is_some_and(|name| name == "module_handlers.odin")
+            {
+                if path.exists() {
+                    println!("Preserving user-owned handler file {}", path.display());
+                }
+                match add_missing_odin_handlers(&path, &code) {
+                    Ok(Some(added)) => {
+                        println!("Writing missing user-owned handlers to {}", added.display());
+                        paths.insert(added);
+                    }
+                    Ok(None) => {}
+                    Err(error) => eprintln!(
+                        "Could not inspect existing Odin handlers ({error:#}); use the generated handler templates"
+                    ),
+                }
+                paths.insert(path);
+                continue;
+            }
             if !path.exists() || fs::read_to_string(&path)? != code {
                 println!("Writing file {}", path.display());
                 fs::write(&path, code)?;
@@ -848,6 +999,7 @@ pub async fn run_prepared_generate_configs(
 
         let cleanup_root = match (run.bindings, &run.dependency_name, run.lang) {
             (BindingKind::Module, Some(name), _) => run.out_dir.join(name),
+            (BindingKind::Server, _, _) => run.out_dir.join("module_schema"),
             (_, _, Language::UnrealCpp) => run.out_dir.join("Source").join(run.module_name.as_ref().unwrap()),
             _ => run.out_dir.clone(),
         };
@@ -998,17 +1150,19 @@ pub enum BindingKind {
     #[default]
     Client,
     Module,
+    Server,
 }
 
 impl clap::ValueEnum for BindingKind {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Client, Self::Module]
+        &[Self::Client, Self::Module, Self::Server]
     }
 
     fn to_possible_value(&self) -> Option<PossibleValue> {
         Some(match self {
             Self::Client => PossibleValue::new("client"),
             Self::Module => PossibleValue::new("module"),
+            Self::Server => PossibleValue::new("server"),
         })
     }
 }
@@ -1018,6 +1172,7 @@ impl BindingKind {
         match self {
             BindingKind::Client => "client",
             BindingKind::Module => "module",
+            BindingKind::Server => "server",
         }
     }
 }
@@ -1032,11 +1187,19 @@ pub enum Language {
     Cpp,
     #[serde(alias = "uecpp", alias = "ue5cpp", alias = "unreal")]
     UnrealCpp,
+    Odin,
 }
 
 impl clap::ValueEnum for Language {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Csharp, Self::TypeScript, Self::Rust, Self::Cpp, Self::UnrealCpp]
+        &[
+            Self::Csharp,
+            Self::TypeScript,
+            Self::Rust,
+            Self::Cpp,
+            Self::UnrealCpp,
+            Self::Odin,
+        ]
     }
     fn to_possible_value(&self) -> Option<PossibleValue> {
         Some(match self {
@@ -1045,6 +1208,7 @@ impl clap::ValueEnum for Language {
             Self::Rust => clap::builder::PossibleValue::new("rust").aliases(["rs", "RS"]),
             Self::Cpp => PossibleValue::new("cpp").aliases(["c++", "cxx"]),
             Self::UnrealCpp => PossibleValue::new("unrealcpp").aliases(["uecpp", "ue5cpp", "unreal"]),
+            Self::Odin => PossibleValue::new("odin"),
         })
     }
 }
@@ -1058,6 +1222,7 @@ impl Language {
             Language::TypeScript => "TypeScript",
             Language::UnrealCpp => "Unreal C++",
             Language::Cpp => "C++",
+            Language::Odin => "Odin",
         }
     }
 
@@ -1068,7 +1233,7 @@ impl Language {
             Language::TypeScript => {
                 // TODO: implement formatting.
             }
-            Language::UnrealCpp | Language::Cpp => {
+            Language::UnrealCpp | Language::Cpp | Language::Odin => {
                 // TODO: implement formatting.
             }
         }
@@ -1086,7 +1251,37 @@ pub fn extract_descriptions(wasm_file: &Path) -> anyhow::Result<ModuleDef> {
 mod tests {
     use super::*;
     use crate::spacetime_config::*;
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
     use std::collections::HashMap;
+
+    fn extract_test_odin_module(_: &Path) -> anyhow::Result<ModuleDef> {
+        test_odin_module(false)
+    }
+
+    fn extract_test_odin_module_updated(_: &Path) -> anyhow::Result<ModuleDef> {
+        test_odin_module(true)
+    }
+
+    fn test_odin_module(updated: bool) -> anyhow::Result<ModuleDef> {
+        let mut builder = RawModuleDefV10Builder::new();
+        let row = builder.add_algebraic_type(
+            [],
+            "Counter",
+            AlgebraicType::product([("id", AlgebraicType::U64)]),
+            true,
+        );
+        builder.build_table("counters", row).finish();
+        builder.add_reducer("increment", ProductType::from([("id", AlgebraicType::U64)]));
+        let mut child = RawModuleDefV10Builder::new();
+        child.add_reducer("child_reducer", ProductType::unit());
+        if updated {
+            builder.add_reducer("reset", ProductType::unit());
+            child.add_reducer("child_reset", ProductType::unit());
+        }
+        builder.add_submodule("child", child.finish());
+        Ok(builder.finish().try_into()?)
+    }
 
     /// Helper to build a SpacetimeConfig with generate entries (database-centric)
     fn make_gen_config(
@@ -1445,6 +1640,172 @@ mod tests {
     }
 
     // Language-Specific Validation Tests
+
+    #[test]
+    fn test_server_bindings_require_odin_and_default_to_module_path() {
+        let cmd = cli();
+        let schema = build_generate_config_schema(&cmd).unwrap();
+        let temp = tempfile::TempDir::new().unwrap();
+        let module_dir = temp.path().join("spacetimedb");
+        std::fs::create_dir_all(&module_dir).unwrap();
+        std::fs::write(module_dir.join("main.odin"), "package main\n").unwrap();
+
+        let mut cfg = HashMap::new();
+        cfg.insert("module-path".to_string(), serde_json::json!(module_dir));
+        cfg.insert("bindings".to_string(), serde_json::json!("server"));
+        let matches = cmd.clone().get_matches_from(vec!["generate", "--lang", "odin"]);
+        let command_config = CommandConfig::new(&schema, cfg, &matches).unwrap();
+        let runs = prepare_generate_run_configs(vec![command_config], false, None).unwrap();
+        assert_eq!(runs[0].bindings, BindingKind::Server);
+        assert_eq!(runs[0].lang, Language::Odin);
+        assert_eq!(runs[0].out_dir, module_dir);
+
+        let mut invalid_cfg = HashMap::new();
+        invalid_cfg.insert("module-path".to_string(), serde_json::json!(module_dir));
+        invalid_cfg.insert("bindings".to_string(), serde_json::json!("server"));
+        let invalid_matches = cmd.clone().get_matches_from(vec!["generate", "--lang", "rust"]);
+        let invalid_config = CommandConfig::new(&schema, invalid_cfg, &invalid_matches).unwrap();
+        let error = prepare_generate_run_configs(vec![invalid_config], false, None).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("--bindings server currently requires --lang odin"));
+    }
+
+    #[tokio::test]
+    async fn test_server_bindings_write_odin_module_schema_package() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let module_dir = temp.path().join("spacetimedb");
+        std::fs::create_dir_all(&module_dir).unwrap();
+        let run = GenerateRunConfig {
+            project_path: module_dir.clone(),
+            wasm_file: Some(module_dir.join("module.wasm")),
+            js_file: None,
+            lang: Language::Odin,
+            namespace: String::new(),
+            module_name: None,
+            module_prefix: None,
+            build_options: String::new(),
+            dotnet_version: None,
+            out_dir: module_dir.clone(),
+            include_private: false,
+            import_extension: None,
+            bindings: BindingKind::Server,
+            dependency_name: None,
+        };
+
+        run_prepared_generate_configs(vec![run], extract_test_odin_module, None, false, false)
+            .await
+            .unwrap();
+
+        let generated = std::fs::read_to_string(module_dir.join("module_schema/module_schema.odin")).unwrap();
+        assert!(generated.contains("write_module_definition :: proc"));
+        assert!(generated.contains("host.typed_table_definition(Counter"));
+        assert!(generated.contains("host.typed_reducer_definition(Increment_Args"));
+
+        let handlers_path = module_dir.join("module_schema/module_handlers.odin");
+        let user_handlers = "package module_schema\n\nimport \"stdb:host\"\n\n// handle_reset_reducer :: proc() {}\nhandle_increment_reducer :: proc(ctx: host.Reducer_Context, args: Increment_Args, error: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\t_ = error\n\treturn 0\n}\n";
+        std::fs::write(&handlers_path, user_handlers).unwrap();
+        let child_handlers_path = module_dir.join("module_schema/submodule_6368696c64/module_handlers.odin");
+        let child_user_handlers = "package submodule_6368696c64\n\nimport \"stdb:host\"\n\nhandle_child_reducer_reducer :: proc(ctx: host.Reducer_Context, args: Child_Reducer_Args, error: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\t_ = error\n\treturn 0\n}\n";
+        std::fs::write(&child_handlers_path, child_user_handlers).unwrap();
+        let run = GenerateRunConfig {
+            project_path: module_dir.clone(),
+            wasm_file: Some(module_dir.join("module.wasm")),
+            js_file: None,
+            lang: Language::Odin,
+            namespace: String::new(),
+            module_name: None,
+            module_prefix: None,
+            build_options: String::new(),
+            dotnet_version: None,
+            out_dir: module_dir.clone(),
+            include_private: false,
+            import_extension: None,
+            bindings: BindingKind::Server,
+            dependency_name: None,
+        };
+        run_prepared_generate_configs(vec![run.clone()], extract_test_odin_module_updated, None, false, false)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&handlers_path).unwrap(), user_handlers);
+        assert_eq!(
+            std::fs::read_to_string(&child_handlers_path).unwrap(),
+            child_user_handlers
+        );
+        let added_path = module_dir.join("module_schema/module_handlers_added_1.odin");
+        let added = std::fs::read_to_string(&added_path).unwrap();
+        assert!(added.contains("handle_reset_reducer :: proc"));
+        assert!(!added.contains("handle_increment_reducer :: proc"));
+        let child_added_path = module_dir.join("module_schema/submodule_6368696c64/module_handlers_added_1.odin");
+        let child_added = std::fs::read_to_string(&child_added_path).unwrap();
+        assert!(child_added.contains("handle_child_reset_reducer :: proc"));
+        assert!(!child_added.contains("handle_child_reducer_reducer :: proc"));
+        let root_templates =
+            std::fs::read_to_string(module_dir.join("module_schema/module_handler_templates.odin.txt")).unwrap();
+        assert!(root_templates.contains("handle_reset_reducer"));
+        let child_templates = std::fs::read_to_string(
+            module_dir.join("module_schema/submodule_6368696c64/module_handler_templates.odin.txt"),
+        )
+        .unwrap();
+        assert!(child_templates.contains("handle_child_reset_reducer"));
+        let customized = format!("{added}\n// User customization.\n");
+        std::fs::write(&added_path, &customized).unwrap();
+        run_prepared_generate_configs(vec![run], extract_test_odin_module_updated, None, false, false)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&added_path).unwrap(), customized);
+        assert!(!module_dir.join("module_schema/module_handlers_added_2.odin").exists());
+        assert!(!module_dir
+            .join("module_schema/submodule_6368696c64/module_handlers_added_2.odin")
+            .exists());
+
+        if std::process::Command::new("odin").arg("version").output().is_ok() {
+            let bindings = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("bindings-odin");
+            let output = std::process::Command::new("odin")
+                .arg("build")
+                .arg(module_dir.join("module_schema"))
+                .arg(format!("-collection:stdb={}", bindings.display()))
+                .arg("-target:freestanding_wasm32")
+                .arg("-no-entry-point")
+                .arg(format!("-out:{}", module_dir.join("module.wasm").display()))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
+
+    #[test]
+    fn test_odin_handler_merge_fails_closed_on_invalid_source() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("module_handlers.odin");
+        let source = "package module_schema\n\nhandle_existing :: proc(\n";
+        std::fs::write(&path, source).unwrap();
+        let generated = "package module_schema\n\nimport \"stdb:host\"\n\nhandle_new :: proc() {}\n";
+        assert!(add_missing_odin_handlers(&path, generated).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), source);
+        assert!(!temp.path().join("module_handlers_added_1.odin").exists());
+    }
+
+    #[test]
+    fn test_odin_handler_merge_checks_other_files_before_creating_primary() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("module_handlers.odin");
+        let other_path = temp.path().join("custom.odin");
+        let source = "package module_schema\n\nhandle_existing :: proc() {\n\thandle_new := 1\n\t_ = handle_new\n}\nhandle_alias :: handle_existing\nwhen true {\n\thandle_conditional :: proc() {}\n}\n";
+        std::fs::write(&other_path, source).unwrap();
+        let generated = "package module_schema\n\nimport \"stdb:host\"\n\nhandle_existing :: proc() {}\n\nhandle_alias :: proc() {}\n\nhandle_conditional :: proc() {}\n\nhandle_new :: proc() {}\n";
+        assert_eq!(add_missing_odin_handlers(&path, generated).unwrap(), Some(path.clone()));
+        let added = std::fs::read_to_string(&path).unwrap();
+        assert!(added.contains("handle_new :: proc"));
+        assert!(!added.contains("handle_existing :: proc"));
+        assert!(!added.contains("handle_alias :: proc"));
+        assert!(!added.contains("handle_conditional :: proc"));
+        assert_eq!(std::fs::read_to_string(other_path).unwrap(), source);
+        assert_eq!(add_missing_odin_handlers(&path, generated).unwrap(), None);
+    }
 
     #[test]
     fn test_rust_defaults_out_dir() {

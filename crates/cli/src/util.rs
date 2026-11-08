@@ -232,10 +232,11 @@ pub enum ModuleLanguage {
     Rust,
     Javascript,
     Cpp,
+    Odin,
 }
 impl clap::ValueEnum for ModuleLanguage {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Csharp, Self::Rust, Self::Javascript, Self::Cpp]
+        &[Self::Csharp, Self::Rust, Self::Javascript, Self::Cpp, Self::Odin]
     }
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
         match self {
@@ -252,6 +253,7 @@ impl clap::ValueEnum for ModuleLanguage {
                 "es",
             ])),
             Self::Cpp => Some(clap::builder::PossibleValue::new("cpp").aliases(["c++", "cxx", "C++", "Cpp"])),
+            Self::Odin => Some(clap::builder::PossibleValue::new("odin").aliases(["Odin"])),
         }
     }
 }
@@ -296,8 +298,23 @@ pub fn detect_module_language(path_to_module: &Path) -> anyhow::Result<ModuleLan
         Ok(ModuleLanguage::Javascript)
     } else if path_to_module.join("CMakeLists.txt").exists() {
         Ok(ModuleLanguage::Cpp)
+    } else if path_to_module.join("main.odin").exists() {
+        Ok(ModuleLanguage::Odin)
     } else {
         anyhow::bail!("Could not detect the language of the module. Are you in a SpacetimeDB project directory?")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_module_language, ModuleLanguage};
+
+    #[test]
+    fn detects_odin_modules_from_main_file() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("main.odin"), "package main\n").unwrap();
+
+        assert_eq!(detect_module_language(project.path()).unwrap(), ModuleLanguage::Odin);
     }
 }
 

@@ -12,7 +12,6 @@
 //!
 //! relation
 //!     = table
-//!     | '(' query ')'
 //!     | relation [ [AS] ident ] { [INNER] JOIN relation [ [AS] ident ] ON predicate }
 //!     ;
 //!

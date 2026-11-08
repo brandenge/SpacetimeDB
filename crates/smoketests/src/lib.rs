@@ -319,6 +319,12 @@ pub fn pnpm_path() -> Option<PathBuf> {
     PNPM_PATH.get_or_init(|| which("pnpm").ok()).clone()
 }
 
+/// Returns the Odin compiler path if it is available on the system.
+pub fn odin_path() -> Option<PathBuf> {
+    static ODIN_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    ODIN_PATH.get_or_init(|| which("odin").ok()).clone()
+}
+
 fn pnpm_minimum_release_age() -> Result<String> {
     let workspace = fs::read_to_string(workspace_root().join("pnpm-workspace.yaml"))?;
     workspace

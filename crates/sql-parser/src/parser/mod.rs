@@ -173,6 +173,13 @@ fn parse_agg_fn(agg_fn: Function, alias: SqlIdent) -> SqlParseResult<Project> {
                 .first()
                 .is_some_and(|Ident { value, .. }| value.to_lowercase() == "count")
     }
+    fn is_sum(name: &ObjectName) -> bool {
+        name.0.len() == 1
+            && name
+                .0
+                .first()
+                .is_some_and(|Ident { value, .. }| value.to_lowercase() == "sum")
+    }
     match agg_fn {
         Function {
             name,
@@ -189,6 +196,27 @@ fn parse_agg_fn(agg_fn: Function, alias: SqlIdent) -> SqlParseResult<Project> {
                 .is_some_and(|arg| matches!(arg, FunctionArg::Unnamed(FunctionArgExpr::Wildcard))) =>
         {
             Ok(Project::Count(alias))
+        }
+        Function {
+            name,
+            args,
+            over: None,
+            distinct: false,
+            special: false,
+            order_by,
+        } if is_sum(&name) && order_by.is_empty() && args.len() == 1 => {
+            let [FunctionArg::Unnamed(FunctionArgExpr::Expr(expr))] = args.as_slice() else {
+                return Err(SqlUnsupported::Aggregate(Function {
+                    name,
+                    args,
+                    over: None,
+                    distinct: false,
+                    special: false,
+                    order_by,
+                })
+                .into());
+            };
+            Ok(Project::Sum(parse_proj(expr.clone())?, alias))
         }
         agg_fn => Err(SqlUnsupported::Aggregate(agg_fn).into()),
     }
