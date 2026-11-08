@@ -33,6 +33,16 @@ There are also related SDK-harness-driven suites for event tables, procedures, a
 using modules such as `modules/sdk-test-event-table`, `modules/sdk-test-procedure*`, and `modules/sdk-test-view*`.
 The Unreal SDK also uses the same underlying harness through `sdks/unreal/tests/sdk_unreal_harness.rs`.
 
+Odin's native SDK harness subset uses Odin-specific fixtures under `modules/sdk-test-*-odin` and clients under
+`sdks/odin/tests`. Run it locally with `cargo test -p spacetimedb-sdk --test test odin_`; this requires Odin on `PATH`.
+CI installs Odin while preparing native SDK clients and runs the prepared clients in the native SDK partitions.
+The Odin subset covers core row mutations and context values, subscriptions (including parameterized and RLS queries), joins
+and row-change deduplication, mixed-case and nested-type code generation, token reauthentication, compression, event tables,
+lifecycle callbacks, procedure returns/transactions/HTTP/scheduling/concurrency, and anonymous, sender-scoped, non-table, and
+primary-keyed views. The native cross-language smoke also tests Odin-generated clients against Rust, TypeScript, C#, and C++
+SDK test modules. The subset currently has 86 registered tests and is still a partial mirror of every language-specific
+selector and specialized suite.
+
 The harness is designed to support running multiple tests in parallel with the same client project,
 running client codegen exactly once per test suite run.
 This unfortunately still conflicts with our use of the suite to test that modules in different languages behave the same,
