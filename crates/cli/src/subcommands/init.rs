@@ -59,6 +59,7 @@ pub enum ServerLanguage {
     Csharp,
     TypeScript,
     Cpp,
+    Odin,
 }
 
 impl ServerLanguage {
@@ -68,6 +69,7 @@ impl ServerLanguage {
             ServerLanguage::Csharp => "csharp",
             ServerLanguage::TypeScript => "typescript",
             ServerLanguage::Cpp => "cpp",
+            ServerLanguage::Odin => "odin",
         }
     }
 
@@ -77,6 +79,7 @@ impl ServerLanguage {
             "csharp" | "c#" => Ok(Some(ServerLanguage::Csharp)),
             "typescript" => Ok(Some(ServerLanguage::TypeScript)),
             "cpp" | "c++" | "cxx" => Ok(Some(ServerLanguage::Cpp)),
+            "odin" => Ok(Some(ServerLanguage::Odin)),
             _ => Err(anyhow!("Unknown server language: {}", s)),
         }
     }
@@ -176,7 +179,7 @@ pub fn cli() -> clap::Command {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(Arg::new("lang").long("lang").value_name("LANG").help(
-            "Server language: rust, csharp, typescript, cpp (it can only be used when --template is not specified)",
+            "Server language: rust, csharp, typescript, cpp, odin (it can only be used when --template is not specified)",
         ))
         .arg(
             Arg::new("template")
@@ -949,7 +952,7 @@ async fn get_template_config_interactive(
             };
         } else if client_selection == none_index {
             // Ask for server language only
-            let server_lang_choices = vec!["Rust", "C#", "TypeScript"];
+            let server_lang_choices = vec!["Rust", "C#", "TypeScript", "Odin"];
             let server_selection = Select::with_theme(&theme)
                 .with_prompt("Select server language")
                 .items(&server_lang_choices)
@@ -960,6 +963,7 @@ async fn get_template_config_interactive(
                 0 => Some(ServerLanguage::Rust),
                 1 => Some(ServerLanguage::Csharp),
                 2 => Some(ServerLanguage::TypeScript),
+                3 => Some(ServerLanguage::Odin),
                 _ => unreachable!("Invalid server language selection"),
             };
 
@@ -1456,6 +1460,7 @@ fn init_builtin(
         Some(ServerLanguage::Cpp) => {
             // No name update needed for C++ at the moment
         }
+        Some(ServerLanguage::Odin) => {}
         None => {}
     }
 
@@ -1522,6 +1527,11 @@ fn init_empty(config: &TemplateConfig, project_path: &Path, dotnet_major: Option
             let server_dir = project_path.join("spacetimedb");
             init_empty_cpp_server(&server_dir, &config.project_name)?;
         }
+        Some(ServerLanguage::Odin) => {
+            println!("Setting up Odin server...");
+            let server_dir = project_path.join("spacetimedb");
+            init_empty_odin_server(&server_dir)?;
+        }
         None => {}
     }
 
@@ -1546,6 +1556,35 @@ fn init_empty_typescript_server(server_dir: &Path, project_name: &str) -> anyhow
 
 fn init_empty_cpp_server(server_dir: &Path, _project_name: &str) -> anyhow::Result<()> {
     init_cpp_project(server_dir)
+}
+
+fn init_empty_odin_server(server_dir: &Path) -> anyhow::Result<()> {
+    create_directory(server_dir)?;
+    std::fs::write(
+        server_dir.join("main.odin"),
+        include_str!("../../../../crates/bindings-odin/examples/basic/main.odin"),
+    )?;
+    std::fs::write(
+        server_dir.join(".gitignore"),
+        include_str!("../../../../crates/bindings-odin/examples/basic/.gitignore"),
+    )?;
+    let schema_dir = server_dir.join("module_schema");
+    create_directory(&schema_dir)?;
+    std::fs::write(
+        schema_dir.join("module_schema.odin"),
+        include_str!("../../../../crates/bindings-odin/examples/basic/module_schema/module_schema.odin"),
+    )?;
+    std::fs::write(
+        schema_dir.join("module_entrypoints.odin"),
+        include_str!("../../../../crates/bindings-odin/examples/basic/module_schema/module_entrypoints.odin"),
+    )?;
+    std::fs::write(
+        schema_dir.join("module_handlers.odin"),
+        include_str!("../../../../crates/bindings-odin/examples/basic/module_schema/module_handlers.odin"),
+    )?;
+    check_for_odin();
+    check_for_git();
+    Ok(())
 }
 
 fn print_next_steps(config: &TemplateConfig, database_name: &str, _project_path: &Path) -> anyhow::Result<()> {
@@ -1614,6 +1653,13 @@ fn print_next_steps(config: &TemplateConfig, database_name: &str, _project_path:
             }
             println!("  cargo run");
         }
+        (TemplateType::Empty, Some(ServerLanguage::Odin), None) => {
+            println!(
+                "  spacetime publish --module-path spacetimedb {}{}",
+                if config.use_local { "--server local " } else { "" },
+                database_name
+            );
+        }
         (_, _, _) => {
             println!("  # Follow the template's README for setup instructions");
         }
@@ -1643,6 +1689,23 @@ fn check_for_cargo() -> bool {
             println!("{}", format!("This OS may be unsupported: {unsupported_os}").yellow());
         }
     }
+    false
+}
+
+fn check_for_odin() -> bool {
+    let executable = if std::env::consts::OS == "windows" {
+        "odin.exe"
+    } else {
+        "odin"
+    };
+    if find_executable(executable).is_some() {
+        return true;
+    }
+    println!(
+        "{}",
+        "Warning: You have created an Odin module, but `odin` is missing from PATH. Install the Odin compiler before building or publishing it."
+            .yellow()
+    );
     false
 }
 
@@ -2218,6 +2281,7 @@ fn install_ai_rules(config: &TemplateConfig, project_path: &Path) -> anyhow::Res
             ServerLanguage::TypeScript => "typescript-server",
             ServerLanguage::Csharp => "csharp-server",
             ServerLanguage::Cpp => "cpp-server",
+            ServerLanguage::Odin => "odin-server",
         };
         if let Some(content) = embedded::get_skill(name) {
             skills.push((name, content));
@@ -2403,6 +2467,36 @@ mod tests {
             return false;
         };
         has_path(dep)
+    }
+
+    #[test]
+    fn test_parse_odin_server_language() {
+        let language = Some("odin".to_string());
+        assert_eq!(parse_server_lang(&language).unwrap(), Some(ServerLanguage::Odin));
+        assert_eq!(ServerLanguage::Odin.as_str(), "odin");
+    }
+
+    #[test]
+    fn test_init_empty_odin_server_copies_basic_module() {
+        let temp = tempfile::TempDir::new().unwrap();
+        init_empty_odin_server(temp.path()).unwrap();
+
+        let source = std::fs::read_to_string(temp.path().join("main.odin")).unwrap();
+        assert_eq!(
+            source,
+            include_str!("../../../../crates/bindings-odin/examples/basic/main.odin")
+        );
+        let gitignore = std::fs::read_to_string(temp.path().join(".gitignore")).unwrap();
+        assert_eq!(gitignore, "build/\n");
+        let schema = std::fs::read_to_string(temp.path().join("module_schema/module_schema.odin")).unwrap();
+        assert_eq!(
+            schema,
+            include_str!("../../../../crates/bindings-odin/examples/basic/module_schema/module_schema.odin")
+        );
+        let entrypoints = std::fs::read_to_string(temp.path().join("module_schema/module_entrypoints.odin")).unwrap();
+        assert!(entrypoints.contains("link_name = \"__call_reducer__\""));
+        let handlers = std::fs::read_to_string(temp.path().join("module_schema/module_handlers.odin")).unwrap();
+        assert!(handlers.contains("handle_increment_reducer"));
     }
 
     #[test]

@@ -1,10 +1,204 @@
 use predicates::prelude::*;
 use spacetimedb_guard::ensure_binaries_built;
-use spacetimedb_smoketests::{copy_module_fixture, patch_module_cargo_to_local_bindings};
+use spacetimedb_smoketests::{copy_module_fixture, odin_path, patch_module_cargo_to_local_bindings, workspace_root};
 use std::process::Command;
 
 fn cli_cmd() -> Command {
     Command::new(ensure_binaries_built())
+}
+
+#[test]
+fn cli_generate_odin_client_bindings_compile() {
+    let Some(odin) = odin_path() else {
+        eprintln!("Skipping Odin codegen smoke test: Odin compiler not found");
+        return;
+    };
+
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let workspace = workspace_root();
+    let module_dir = workspace.join("crates/bindings-odin/examples/ping");
+    let output_dir = temp_dir.path().join("generated");
+    let output = cli_cmd()
+        .args(["generate", "--lang", "odin", "--module-path"])
+        .arg(&module_dir)
+        .arg("--out-dir")
+        .arg(&output_dir)
+        .args(["--yes"])
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to execute Odin generate");
+    assert!(
+        output.status.success(),
+        "Odin generate failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let table_bindings =
+        std::fs::read_to_string(output_dir.join("items_table.odin")).expect("generated table bindings should exist");
+    assert!(table_bindings.contains("Items_Handlers"));
+    assert!(table_bindings.contains("client.dispatch_keyed_changes"));
+
+    let collection = format!("-collection:stdb={}", workspace.join("crates/bindings-odin").display());
+    let tests = Command::new(&odin)
+        .args(["test", "crates/bindings-odin/tests"])
+        .arg(&collection)
+        .arg("-thread-count:1")
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to execute Odin SDK tests");
+    assert!(
+        tests.status.success(),
+        "Odin SDK tests failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&tests.stdout),
+        String::from_utf8_lossy(&tests.stderr)
+    );
+
+    let check = Command::new(&odin)
+        .arg("check")
+        .arg(&output_dir)
+        .arg("-no-entry-point")
+        .arg("-thread-count:1")
+        .arg(&collection)
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to type-check generated Odin bindings");
+    assert!(
+        check.status.success(),
+        "Generated Odin bindings did not type-check:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let build = cli_cmd()
+        .args(["build", "--module-path"])
+        .arg(&module_dir)
+        .args(["--debug", "--lint-dir", ""])
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to build Odin receiver module");
+    assert!(
+        build.status.success(),
+        "Odin build failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let receiver_dir = temp_dir.path().join("remote_bindings");
+    let receiver_generate = cli_cmd()
+        .args(["generate", "--lang", "odin", "--bindings", "module", "--bin-path"])
+        .arg(module_dir.join("build/spacetimedb.wasm"))
+        .arg("--out-dir")
+        .arg(&receiver_dir)
+        .args(["--yes"])
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to generate Odin receiver bindings");
+    assert!(
+        receiver_generate.status.success(),
+        "Odin receiver generation failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&receiver_generate.stdout),
+        String::from_utf8_lossy(&receiver_generate.stderr)
+    );
+    std::fs::write(
+        receiver_dir.join("outbox_compile_check.odin"),
+        r#"package module_bindings
+
+import "stdb:host"
+
+Outbox_Compile_Row :: struct {
+	id: u32,
+	name: string,
+}
+
+outbox_compile_check :: proc() {
+	table: host.Table_Definition
+	arg_column_buffer: [2]u16
+    _ = set_score_outbox(Outbox_Compile_Row, &table, "receiver", arg_column_buffer[:], Outbox_Compile_Row{})
+}
+"#,
+    )
+    .expect("failed to add outbox compile-check fixture");
+    let receiver_check = Command::new(&odin)
+        .arg("check")
+        .arg(&receiver_dir)
+        .arg("-no-entry-point")
+        .arg("-thread-count:1")
+        .arg(&collection)
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to type-check generated Odin receiver bindings");
+    assert!(
+        receiver_check.status.success(),
+        "Generated Odin receiver bindings did not type-check:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&receiver_check.stdout),
+        String::from_utf8_lossy(&receiver_check.stderr)
+    );
+
+    let browser_dir = temp_dir.path().join("browser_client");
+    std::fs::create_dir_all(&browser_dir).expect("failed to create browser client fixture");
+    std::fs::write(
+        browser_dir.join("main.odin"),
+        r#"package browser_smoke
+
+import "stdb:client"
+
+connection: client.Connection
+
+@(export, link_name="browser_connect")
+browser_connect :: proc() -> i32 {
+    created, err := client.connect({host = "wss://db.example", database = "test", token = "signed-token", automatic_reconnect = true})
+	connection = created
+	return i32(err)
+}
+
+@(export, link_name="browser_subscribe")
+browser_subscribe :: proc() -> i32 {
+    queries := [?]string{"SELECT * FROM test"}
+    _, err := client.subscribe(&connection, 10, queries[:])
+    return i32(err)
+}
+
+@(export, link_name="browser_poll")
+browser_poll :: proc() -> i32 {
+	message, err := client.poll(&connection)
+	client.message_destroy(&message)
+	return i32(err)
+}
+
+main :: proc() {}
+"#,
+    )
+    .expect("failed to write browser client fixture");
+    let browser_wasm = temp_dir.path().join("browser_client.wasm");
+    let browser_build = Command::new(&odin)
+        .arg("build")
+        .arg(&browser_dir)
+        .args(["-target:js_wasm32", &collection])
+        .arg(format!("-out:{}", browser_wasm.display()))
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to build Odin browser client");
+    assert!(
+        browser_build.status.success(),
+        "Odin browser client did not build:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&browser_build.stdout),
+        String::from_utf8_lossy(&browser_build.stderr)
+    );
+
+    let browser_transport_test = Command::new("node")
+        .args(["--test"])
+        .arg(workspace.join("crates/bindings-odin/tests/browser_transport.test.mjs"))
+        .env("STDB_ODIN_BROWSER_WASM", &browser_wasm)
+        .current_dir(&workspace)
+        .output()
+        .expect("failed to run Odin browser transport test");
+    assert!(
+        browser_transport_test.status.success(),
+        "Odin browser transport test failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&browser_transport_test.stdout),
+        String::from_utf8_lossy(&browser_transport_test.stderr)
+    );
 }
 
 /// Standalone-only: this builds a local module and generates bindings without contacting a server.

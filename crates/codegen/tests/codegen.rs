@@ -1,5 +1,6 @@
 use spacetimedb_codegen::{
-    generate, generate_receiver_bindings, CodegenOptions, Csharp, ImportExtension, ReceiverLanguage, Rust, TypeScript,
+    generate, generate_receiver_bindings, CodegenOptions, Csharp, ImportExtension, Odin, ReceiverLanguage, Rust,
+    TypeScript,
 };
 use spacetimedb_data_structures::map::HashMap;
 use spacetimedb_schema::def::ModuleDef;
@@ -88,6 +89,1360 @@ declare_tests! {
     test_codegen_csharp => Csharp { namespace: "SpacetimeDB" },
     test_codegen_typescript => TypeScript::default(),
     test_codegen_rust => Rust,
+    test_codegen_odin => Odin,
+}
+
+#[test]
+fn test_codegen_odin_result_type() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+
+    let mut builder = RawModuleDefV10Builder::new();
+    builder.add_reducer(
+        "handle",
+        ProductType::from([(
+            "outcome",
+            AlgebraicType::result(AlgebraicType::U32, AlgebraicType::String),
+        )]),
+    );
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let files = generate(&module, &Odin, &CodegenOptions::default());
+    let reducer = files
+        .iter()
+        .find(|file| file.filename == "handle_reducer.odin")
+        .expect("Odin reducer bindings should be generated");
+    assert!(reducer.code.contains("outcome: host.Result(u32, string)"));
+    assert!(reducer.code.contains("call_handle_with_result_callback"));
+    assert!(!reducer.code.contains("Result types are not supported"));
+}
+
+#[test]
+fn test_codegen_odin_primary_key_cache_lookup() {
+    let files = generate(compiled_module(), &Odin, &CodegenOptions::default());
+    let table = files
+        .iter()
+        .find(|file| file.filename == "idc_outbox_table.odin")
+        .expect("Odin table bindings should be generated");
+    assert!(table.code.contains("idc_outbox_cache_by_id :: proc"));
+    assert!(table.code.contains("client.cache_index_register"));
+    assert!(table.code.contains("client.cache_index_lookup"));
+    assert!(table.code.contains("idc_outbox_cache_eq_tag :: proc"));
+    assert!(table.code.contains("client.cache_index_decode_rows"));
+    assert!(table.code.contains("idc_outbox_cache_range_id :: proc"));
+    assert!(table.code.contains("client.cache_index_decode_range_rows"));
+    let globals = files
+        .iter()
+        .find(|file| file.filename == "module_bindings.odin")
+        .expect("Odin global bindings should be generated");
+    assert!(globals.code.contains("register_row_change_dispatcher :: proc"));
+    assert!(globals.code.contains("unregister_row_change_dispatcher :: proc"));
+    assert!(globals.code.contains("idc_outbox_on_insert :: proc"));
+    assert!(globals.code.contains("idc_outbox_remove_on_insert :: proc"));
+    assert!(globals.code.contains("idc_outbox_on_delete :: proc"));
+    assert!(globals.code.contains("idc_outbox_remove_on_delete :: proc"));
+    assert!(globals
+        .code
+        .contains("Idc_Outbox_Insert_Callback :: proc(row: ^IdcOutbox, user: rawptr)"));
+    assert!(!table
+        .code
+        .contains("client.cache_filter_rows(cache, IDC_OUTBOX_TABLE, IdcOutbox, predicate, &value)"));
+    assert!(files.iter().any(|file| {
+        file.filename.ends_with("_procedure.odin")
+            && file.code.contains("client.Procedure_Result_Callback")
+            && file.code.contains("_with_result_callback")
+    }));
+}
+
+#[test]
+fn test_codegen_odin_composite_cache_index_helpers() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::db::raw_def::v9::RawIndexAlgorithm;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+
+    let mut builder = RawModuleDefV10Builder::new();
+    let row = builder.add_algebraic_type(
+        [],
+        "CompoundRow",
+        AlgebraicType::product([
+            ("region", AlgebraicType::String),
+            ("number", AlgebraicType::U64),
+            ("value", AlgebraicType::String),
+            ("score", AlgebraicType::F32),
+            ("large", AlgebraicType::I256),
+        ]),
+        true,
+    );
+    builder
+        .build_table("compound", row)
+        .with_index(
+            RawIndexAlgorithm::BTree { columns: [0, 1].into() },
+            "region_number_idx",
+            "by_region_number",
+        )
+        .finish();
+    builder.add_reducer("noop", ProductType::unit());
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let files = generate(&module, &Odin, &CodegenOptions::default());
+    let table = files
+        .iter()
+        .find(|file| file.filename == "compound_table.odin")
+        .expect("Odin composite table bindings should be generated");
+    assert!(
+        table.code.contains("compound_by_region_number_Key :: struct"),
+        "{}",
+        table.code
+    );
+    assert!(table.code.contains("compound_cache_by_region_number :: proc"));
+    assert!(table.code.contains("compound_by_region_number_Prefix_1 :: struct"));
+    assert!(table.code.contains("compound_cache_prefix_by_region_number_1 :: proc"));
+    assert!(table.code.contains("compound_cache_range_by_region_number :: proc"));
+    assert!(table.code.contains("compound_cache_eq_score :: proc"));
+    assert!(table.code.contains("compound_cache_eq_large :: proc"));
+    assert!(table.code.contains("compound_cache_range_score :: proc"));
+    assert!(table.code.contains("compound_cache_range_large :: proc"));
+    assert!(table.code.contains("compound_score_less_value :: proc"));
+    assert!(table.code.contains("compound_large_less_value :: proc"));
+    assert!(table
+        .code
+        .contains("\t\tlower_key = encoded_lower\n\t}\n\tdefer delete(lower_key)"));
+    assert!(table
+        .code
+        .contains("\t\tupper_key = encoded_upper\n\t}\n\tdefer delete(upper_key)"));
+}
+
+#[test]
+fn test_codegen_odin_client_submodule() {
+    use spacetimedb_lib::db::raw_def::v10::{CaseConversionPolicy, RawModuleDefV10Builder};
+    use spacetimedb_lib::db::raw_def::v9::RawIndexAlgorithm;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+
+    let mut child = RawModuleDefV10Builder::new();
+    let row = child.add_algebraic_type(
+        [],
+        "ChildRow",
+        AlgebraicType::product([
+            ("id", AlgebraicType::U64),
+            ("score", AlgebraicType::F32),
+            ("large", AlgebraicType::I256),
+        ]),
+        true,
+    );
+    child
+        .build_table("items", row)
+        .with_primary_key(0)
+        .with_unique_constraint(0)
+        .with_index(RawIndexAlgorithm::BTree { columns: [0].into() }, "items_id", "by_id")
+        .finish();
+    child.add_reducer("update", ProductType::from([("row", AlgebraicType::Ref(row))]));
+    child.add_procedure("lookup", ProductType::unit(), AlgebraicType::U64);
+    child.add_view(
+        "by_min",
+        0,
+        true,
+        true,
+        ProductType::from([("min", AlgebraicType::U64)]),
+        AlgebraicType::array(AlgebraicType::Ref(row)),
+    );
+    let mut root = RawModuleDefV10Builder::new();
+    root.set_case_conversion_policy(CaseConversionPolicy::SnakeCase);
+    root.add_submodule("childLib", child.finish());
+    let module: ModuleDef = root.finish().try_into().unwrap();
+    let files = generate(&module, &Odin, &CodegenOptions::default());
+    let package = "submodule_6368696c644c6962";
+    let table = files
+        .iter()
+        .find(|file| file.filename == format!("{package}/items_table.odin"))
+        .unwrap();
+    assert!(table.code.contains("package submodule_6368696c644c6962"));
+    assert!(table.code.contains("ITEMS_TABLE :: \"child_lib.items\""));
+    assert!(table.code.contains("items_cache_range_score"));
+    assert!(table.code.contains("items_cache_range_large"));
+    assert!(files
+        .iter()
+        .any(|file| file.filename == format!("{package}/child_row_type.odin")));
+    let procedure = files
+        .iter()
+        .find(|file| file.filename == format!("{package}/lookup_procedure.odin"))
+        .unwrap();
+    assert!(procedure.code.contains("\"child_lib.lookup\""));
+    let view = files
+        .iter()
+        .find(|file| file.filename == format!("{package}/by_min_table.odin"))
+        .unwrap();
+    assert!(view.code.contains("client.sql_view_query(\"child_lib.by_min\""));
+    let global = files
+        .iter()
+        .find(|file| file.filename == "module_bindings.odin")
+        .unwrap();
+    assert!(global.code.contains("SELECT * FROM child_lib.items"));
+    assert!(!global.code.contains("SELECT * FROM child_lib.by_min"));
+    assert!(global
+        .code
+        .contains("submodule_6368696c644c6962.dispatch_all(changes, callbacks.submodule_6368696c644c6962, user)"));
+    let receiver_files = generate_receiver_bindings(&module, ReceiverLanguage::Odin, None).unwrap();
+    let receiver = receiver_files
+        .iter()
+        .find(|file| file.filename == format!("{package}/receiver_bindings.odin"))
+        .unwrap();
+    assert!(receiver.code.contains("\"child_lib.update\""));
+    assert!(receiver.code.contains("row: ChildRow"));
+    assert!(receiver_files
+        .iter()
+        .any(|file| file.filename == format!("{package}/child_row_type.odin")));
+
+    if std::process::Command::new("odin").arg("version").output().is_err() {
+        return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    for file in files {
+        let path = temp.path().join(file.filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, file.code).unwrap();
+    }
+    let bindings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("bindings-odin");
+    let output = std::process::Command::new("odin")
+        .arg("check")
+        .arg(temp.path())
+        .arg(format!("-collection:stdb={}", bindings.display()))
+        .arg("-no-entry-point")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let receiver_temp = tempfile::TempDir::new().unwrap();
+    for file in receiver_files {
+        let path = receiver_temp.path().join(file.filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, file.code).unwrap();
+    }
+    let output = std::process::Command::new("odin")
+        .arg("check")
+        .arg(receiver_temp.path().join(package))
+        .arg(format!("-collection:stdb={}", bindings.display()))
+        .arg("-no-entry-point")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn test_codegen_odin_client_rust_fixture_compiles() {
+    check_odin_client_fixture(compiled_module());
+}
+
+#[test]
+fn test_codegen_odin_client_typescript_fixture_compiles() {
+    check_odin_client_fixture(compiled_typescript_module());
+}
+
+#[test]
+#[ignore = "requires prebuilt CLI, standalone server, and C# module on macOS"]
+fn test_codegen_odin_client_live_cross_language() {
+    use spacetimedb_testing::sdk::{Test, PRECOMPILED_MODULE_DIR_ENV_VAR};
+
+    if cfg!(target_os = "macos") {
+        let directory = std::env::var_os(PRECOMPILED_MODULE_DIR_ENV_VAR)
+            .expect("macOS requires a precompiled C# module in SPACETIME_SDK_TEST_MODULE_DIR");
+        assert!(
+            std::path::Path::new(&directory).join("module-test-cs.wasm").is_file(),
+            "precompiled module-test-cs.wasm is required on macOS"
+        );
+    }
+
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let source = repo.join("crates/bindings-odin/tests/cross_language_client/main.odin");
+    let bindings = repo.join("crates/bindings-odin");
+    for module in ["module-test", "module-test-ts", "module-test-cs"] {
+        let project = tempfile::TempDir::new().unwrap();
+        std::fs::copy(&source, project.path().join("main.odin")).unwrap();
+        Test::builder()
+            .with_name(format!("odin-client-{module}"))
+            .with_module(module)
+            .with_client(project.path().to_string_lossy().into_owned())
+            .with_language("odin")
+            .with_bindings_dir("module_bindings")
+            .with_compile_command(format!(
+                "odin build . -collection:stdb={} -out:client -no-threaded-checker",
+                bindings.display()
+            ))
+            .with_run_command(
+                "sh -c 'exec ./client \"$SPACETIME_SDK_TEST_SERVER_URL\" \"$SPACETIME_SDK_TEST_DB_NAME\"'",
+            )
+            .build()
+            .run();
+    }
+}
+
+fn check_odin_client_fixture(module: &ModuleDef) {
+    if std::process::Command::new("odin").arg("version").output().is_err() {
+        return;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    for file in generate(module, &Odin, &CodegenOptions::default()) {
+        let path = temp.path().join(file.filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, file.code).unwrap();
+    }
+    let bindings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("bindings-odin");
+    let output = std::process::Command::new("odin")
+        .arg("check")
+        .arg(temp.path())
+        .arg(format!("-collection:stdb={}", bindings.display()))
+        .arg("-no-entry-point")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn test_codegen_odin_server_rust_fixture_roundtrip() {
+    assert_odin_server_fixture_roundtrip(compiled_module());
+}
+
+#[test]
+fn test_codegen_odin_server_typescript_fixture_roundtrip() {
+    assert_odin_server_fixture_roundtrip(compiled_typescript_module());
+}
+
+#[test]
+fn test_codegen_odin_server_dotnet_fixture_roundtrip() {
+    if std::process::Command::new("odin").arg("version").output().is_err() {
+        return;
+    }
+    let fixture = if let Some(path) = std::env::var_os("SPACETIME_ODIN_CSHARP_FIXTURE_WASM") {
+        CompiledModule::from_artifact("module-test-cs", "Wasm".parse().unwrap(), path.into())
+    } else if cfg!(target_os = "macos") {
+        return;
+    } else {
+        CompiledModule::compile("module-test-cs", CompilationMode::Debug)
+    };
+    let original = fixture.extract_schema_blocking();
+    check_odin_client_fixture(&original);
+    assert_odin_server_fixture_roundtrip(&original);
+}
+
+#[test]
+fn test_codegen_odin_server_case_policy_roundtrip() {
+    use spacetimedb_lib::db::raw_def::v10::{CaseConversionPolicy, RawModuleDefV10Builder};
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+
+    for policy in [CaseConversionPolicy::None, CaseConversionPolicy::SnakeCase] {
+        let mut builder = RawModuleDefV10Builder::new();
+        builder.set_case_conversion_policy(policy);
+        builder.add_algebraic_type(
+            ["Outer".into()],
+            "Unused",
+            AlgebraicType::product([("case", AlgebraicType::U64), ("nestedValue", AlgebraicType::U64)]),
+            false,
+        );
+        let nested = builder.add_algebraic_type(
+            [],
+            "MixedRecord",
+            AlgebraicType::product([("nestedValue", AlgebraicType::U64)]),
+            true,
+        );
+        builder
+            .build_table_with_new_type(
+                "valuesTable",
+                ProductType::from([
+                    ("someField", AlgebraicType::U64),
+                    ("nested2", AlgebraicType::Ref(nested)),
+                    ("case", AlgebraicType::U64),
+                ]),
+                true,
+            )
+            .finish();
+        builder
+            .build_table_with_new_type("eventLog", ProductType::from([("value", AlgebraicType::U64)]), true)
+            .with_event(true)
+            .finish();
+        builder.add_reducer("sendData", ProductType::from([("arg2", AlgebraicType::Ref(nested))]));
+        let module: ModuleDef = builder.finish().try_into().unwrap();
+        assert_odin_server_fixture_roundtrip(&module);
+
+        let mut type_only = RawModuleDefV10Builder::new();
+        type_only.set_case_conversion_policy(policy);
+        type_only.add_algebraic_type(
+            ["Outer".into()],
+            "TypeOnly",
+            AlgebraicType::product([("nestedValue", AlgebraicType::U64)]),
+            false,
+        );
+        if matches!(policy, CaseConversionPolicy::None) {
+            type_only.add_algebraic_type(
+                [],
+                "EscapedFields",
+                AlgebraicType::product([("case", AlgebraicType::U64), ("case_", AlgebraicType::U64)]),
+                false,
+            );
+        }
+        let module: ModuleDef = type_only.finish().try_into().unwrap();
+        assert_odin_server_fixture_roundtrip(&module);
+    }
+}
+
+#[test]
+fn test_codegen_odin_server_empty_environment_roundtrip() {
+    use spacetimedb_lib::db::raw_def::v10::{RawModuleDefV10, RawModuleDefV10Builder, RawModuleDefV10Section};
+
+    let mut raw = RawModuleDefV10Builder::new().finish();
+    raw.sections.push(RawModuleDefV10Section::Environment(Vec::new()));
+    let module: ModuleDef = raw.try_into().unwrap();
+    let files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    let Some(extracted) = compile_odin_server_schema(files) else {
+        return;
+    };
+    let raw: RawModuleDefV10 = extracted.into();
+    assert!(raw.sections.iter().any(|section| {
+        matches!(section, RawModuleDefV10Section::Environment(declarations) if declarations.is_empty())
+    }));
+}
+
+fn assert_odin_server_fixture_roundtrip(original: &ModuleDef) {
+    let files = spacetimedb_codegen::odin::generate_server_module_schema(original).unwrap();
+    let Some(extracted) = compile_odin_server_schema(files) else {
+        return;
+    };
+    let table_names = |module: &ModuleDef| {
+        let mut names = module
+            .all_tables_with_prefix()
+            .into_iter()
+            .map(|(path, _, table)| path.join(table.name.clone()).to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+    let reducer_names = |module: &ModuleDef| {
+        let mut names = module
+            .all_reducers_with_prefix()
+            .into_iter()
+            .map(|(_, _, reducer)| reducer.name.to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+    assert_eq!(table_names(original), table_names(&extracted));
+    assert_eq!(reducer_names(original), reducer_names(&extracted));
+    let mut original_types = original
+        .types()
+        .map(|typ| (typ.accessor_name.to_string(), typ.custom_ordering))
+        .collect::<Vec<_>>();
+    let mut extracted_types = extracted
+        .types()
+        .map(|typ| (typ.accessor_name.to_string(), typ.custom_ordering))
+        .collect::<Vec<_>>();
+    original_types.sort();
+    extracted_types.sort();
+    assert_eq!(original_types, extracted_types, "exported types");
+    let extracted_types_by_name = extracted
+        .types()
+        .map(|typ| (typ.accessor_name.to_string(), typ))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for typ in original.types() {
+        let name = typ.accessor_name.to_string();
+        let actual = extracted_types_by_name[&name];
+        assert_eq!(
+            original.typespace().with_type(&typ.ty).resolve_refs().unwrap(),
+            extracted.typespace().with_type(&actual.ty).resolve_refs().unwrap(),
+            "exported type {name}"
+        );
+    }
+    assert_eq!(
+        original.environment(),
+        extracted.environment(),
+        "environment declarations"
+    );
+    assert_eq!(
+        original.http_handlers().collect::<Vec<_>>(),
+        extracted.http_handlers().collect::<Vec<_>>(),
+        "HTTP handlers"
+    );
+    assert_eq!(original.http_routes(), extracted.http_routes(), "HTTP routes");
+    let mut original_rls = original
+        .row_level_security()
+        .map(|policy| policy.sql.as_ref())
+        .collect::<Vec<_>>();
+    let mut extracted_rls = extracted
+        .row_level_security()
+        .map(|policy| policy.sql.as_ref())
+        .collect::<Vec<_>>();
+    original_rls.sort();
+    extracted_rls.sort();
+    assert_eq!(original_rls, extracted_rls, "row-level security");
+    let extracted_reducers = extracted
+        .all_reducers_with_prefix()
+        .into_iter()
+        .map(|(_, owner, reducer)| (reducer.name.to_string(), (owner, reducer)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (_, owner, reducer) in original.all_reducers_with_prefix() {
+        let name = reducer.name.to_string();
+        let (actual_owner, actual) = extracted_reducers[&name];
+        assert_eq!(
+            reducer.accessor_name, actual.accessor_name,
+            "reducer accessor for {name}"
+        );
+        assert_eq!(reducer.lifecycle, actual.lifecycle, "reducer lifecycle for {name}");
+        assert_eq!(reducer.visibility, actual.visibility, "reducer visibility for {name}");
+        assert_eq!(
+            owner.typespace().with_type(&reducer.params).resolve_refs().unwrap(),
+            actual_owner
+                .typespace()
+                .with_type(&actual.params)
+                .resolve_refs()
+                .unwrap(),
+            "reducer arguments for {name}"
+        );
+    }
+    let extracted_procedures = extracted
+        .all_procedures_with_prefix()
+        .into_iter()
+        .map(|(path, owner, procedure)| (path.join(procedure.name.clone()).to_string(), (owner, procedure)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(original.all_procedures_with_prefix().len(), extracted_procedures.len());
+    for (path, owner, procedure) in original.all_procedures_with_prefix() {
+        let name = path.join(procedure.name.clone()).to_string();
+        let (actual_owner, actual) = extracted_procedures[&name];
+        assert_eq!(
+            procedure.accessor_name, actual.accessor_name,
+            "procedure accessor for {name}"
+        );
+        assert_eq!(
+            procedure.visibility, actual.visibility,
+            "procedure visibility for {name}"
+        );
+        assert_eq!(
+            owner.typespace().with_type(&procedure.params).resolve_refs().unwrap(),
+            actual_owner
+                .typespace()
+                .with_type(&actual.params)
+                .resolve_refs()
+                .unwrap(),
+            "procedure arguments for {name}"
+        );
+        assert_eq!(
+            owner
+                .typespace()
+                .with_type(&procedure.return_type)
+                .resolve_refs()
+                .unwrap(),
+            actual_owner
+                .typespace()
+                .with_type(&actual.return_type)
+                .resolve_refs()
+                .unwrap(),
+            "procedure return type for {name}"
+        );
+    }
+    let extracted_views = extracted
+        .all_views_with_prefix()
+        .into_iter()
+        .map(|(path, owner, view)| (path.join(view.name.clone()).to_string(), (owner, view)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(original.all_views_with_prefix().len(), extracted_views.len());
+    for (path, owner, view) in original.all_views_with_prefix() {
+        let name = path.join(view.name.clone()).to_string();
+        let (actual_owner, actual) = extracted_views[&name];
+        assert_eq!(view.accessor_name, actual.accessor_name, "view accessor for {name}");
+        assert_eq!(view.is_anonymous, actual.is_anonymous, "view anonymity for {name}");
+        assert_eq!(view.primary_key, actual.primary_key, "view primary key for {name}");
+        assert_eq!(
+            owner.typespace().with_type(&view.params).resolve_refs().unwrap(),
+            actual_owner
+                .typespace()
+                .with_type(&actual.params)
+                .resolve_refs()
+                .unwrap(),
+            "view arguments for {name}"
+        );
+        assert_eq!(
+            owner.typespace().with_type(&view.return_type).resolve_refs().unwrap(),
+            actual_owner
+                .typespace()
+                .with_type(&actual.return_type)
+                .resolve_refs()
+                .unwrap(),
+            "view return type for {name}"
+        );
+    }
+    let extracted_tables = extracted
+        .all_tables_with_prefix()
+        .into_iter()
+        .map(|(path, owner, table)| (path.join(table.name.clone()).to_string(), (owner, table)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (path, owner, table) in original.all_tables_with_prefix() {
+        let name = path.join(table.name.clone()).to_string();
+        let (actual_owner, actual) = extracted_tables[&name];
+        assert_eq!(table.accessor_name, actual.accessor_name, "table accessor for {name}");
+        assert_eq!(table.table_access, actual.table_access, "table access for {name}");
+        assert_eq!(table.primary_key, actual.primary_key, "primary key for {name}");
+        assert_eq!(table.is_event, actual.is_event, "event flag for {name}");
+        assert_eq!(table.indexes, actual.indexes, "indexes for {name}");
+        assert_eq!(table.constraints, actual.constraints, "constraints for {name}");
+        assert_eq!(table.sequences, actual.sequences, "sequences for {name}");
+        assert_eq!(table.schedule, actual.schedule, "schedule for {name}");
+        assert_eq!(table.outbox, actual.outbox, "outbox for {name}");
+        assert_eq!(table.columns.len(), actual.columns.len(), "column count for {name}");
+        for (expected, actual) in table.columns.iter().zip(&actual.columns) {
+            assert_eq!(expected.name, actual.name, "column name in {name}");
+            assert_eq!(
+                expected.accessor_name, actual.accessor_name,
+                "column accessor in {name}"
+            );
+            assert_eq!(
+                owner.typespace().with_type(&expected.ty).resolve_refs().unwrap(),
+                actual_owner.typespace().with_type(&actual.ty).resolve_refs().unwrap(),
+                "type of {name}.{}",
+                expected.name
+            );
+            assert_eq!(expected.default_value, actual.default_value, "default in {name}");
+        }
+    }
+}
+
+#[test]
+fn test_codegen_odin_server_module_schema() {
+    use spacetimedb_lib::db::raw_def::v10::{RawEnvVarTypeV10, RawEnvironmentDeclarationV10, RawModuleDefV10Builder};
+    use spacetimedb_lib::db::raw_def::v9::RawIndexAlgorithm;
+    use spacetimedb_lib::{AlgebraicType, AlgebraicValue, ProductType, ScheduleAt};
+
+    let mut builder = RawModuleDefV10Builder::new();
+    builder
+        .build_table_with_new_type(
+            "counters",
+            ProductType::from([("id", AlgebraicType::U64), ("value", AlgebraicType::U64)]),
+            true,
+        )
+        .with_primary_key(0)
+        .with_unique_constraint(0)
+        .with_default_column_value(1, AlgebraicValue::U64(7))
+        .with_index(
+            RawIndexAlgorithm::BTree { columns: [0].into() },
+            "counters_id_idx_btree",
+            "by_id",
+        )
+        .finish();
+    builder.add_reducer("increment", ProductType::from([("id", AlgebraicType::U64)]));
+    builder.add_reducer("reset", ProductType::unit());
+    builder.add_reducer(
+        "accept_result",
+        ProductType::from([(
+            "result",
+            AlgebraicType::result(AlgebraicType::unit(), AlgebraicType::String),
+        )]),
+    );
+    let shared_row = builder.add_algebraic_type(
+        [],
+        "SharedRow",
+        AlgebraicType::product([("value", AlgebraicType::U64)]),
+        true,
+    );
+    builder.build_table("shared", shared_row).finish();
+    builder.build_table("shared_again", shared_row).finish();
+    builder.add_reducer(
+        "accept_shared",
+        ProductType::from([("row", AlgebraicType::Ref(shared_row))]),
+    );
+    let person = builder.add_algebraic_type(
+        [],
+        "Person",
+        AlgebraicType::product([("name", AlgebraicType::String)]),
+        true,
+    );
+    builder.add_procedure("lookup", ProductType::unit(), AlgebraicType::Ref(person));
+    let timer = builder.add_algebraic_type(
+        [],
+        "Timer",
+        AlgebraicType::product([
+            ("scheduled_id", AlgebraicType::U64),
+            ("scheduled_at", ScheduleAt::get_type()),
+        ]),
+        true,
+    );
+    builder
+        .build_table("timers", timer)
+        .with_auto_inc_primary_key(0)
+        .with_index(
+            RawIndexAlgorithm::BTree { columns: [0].into() },
+            "timers_id_idx_btree",
+            "by_id",
+        )
+        .finish();
+    builder.add_procedure(
+        "on_tick",
+        ProductType::from([("arg", AlgebraicType::Ref(timer))]),
+        AlgebraicType::unit(),
+    );
+    builder.add_schedule("timers", 1, "on_tick");
+    let reducer_timer = builder.add_algebraic_type(
+        [],
+        "ReducerTimer",
+        AlgebraicType::product([
+            ("scheduled_id", AlgebraicType::U64),
+            ("scheduled_at", ScheduleAt::get_type()),
+        ]),
+        true,
+    );
+    builder
+        .build_table("reducer_timers", reducer_timer)
+        .with_auto_inc_primary_key(0)
+        .with_index(
+            RawIndexAlgorithm::BTree { columns: [0].into() },
+            "reducer_timers_id_idx_btree",
+            "by_id",
+        )
+        .finish();
+    builder.add_reducer(
+        "on_reducer_tick",
+        ProductType::from([("arg", AlgebraicType::Ref(reducer_timer))]),
+    );
+    builder.add_schedule("reducer_timers", 1, "on_reducer_tick");
+    builder.add_view(
+        "people",
+        0,
+        true,
+        true,
+        ProductType::unit(),
+        AlgebraicType::array(AlgebraicType::Ref(person)),
+    );
+    builder.add_environment(vec![
+        RawEnvironmentDeclarationV10 {
+            name: "MODE".to_string(),
+            ty: RawEnvVarTypeV10::Union(vec!["development".to_string(), "production".to_string()]),
+            optional: false,
+        },
+        RawEnvironmentDeclarationV10 {
+            name: "OPTIONAL".to_string(),
+            ty: RawEnvVarTypeV10::String,
+            optional: true,
+        },
+    ]);
+    builder.add_row_level_security("SELECT true;");
+
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    let schema = files
+        .iter()
+        .find(|file| file.filename == "module_schema/module_schema.odin")
+        .expect("Odin server schema helper should be generated");
+    assert!(schema.code.contains("package module_schema"));
+    assert!(schema.code.contains("Counters :: struct"));
+    assert!(schema.code.contains("Increment_Args :: struct"));
+    assert!(schema.code.contains("host.typed_table_definition(Counters"));
+    assert!(schema.code.contains("host.typed_reducer_definition(Increment_Args"));
+    assert!(schema.code.contains("reducer_0, reducer_err_0"));
+    assert!(schema.code.contains("reducer_1, reducer_err_1"));
+    assert!(schema.code.contains("host.typed_procedure_definition(Lookup_Args"));
+    assert!(schema.code.contains("Timer :: struct"));
+    assert!(schema.code.contains("scheduled_function = \"on_tick\""));
+    assert!(schema
+        .code
+        .contains("host.typed_view_definition(People_Args_Wire, Person"));
+    assert!(schema.code.contains("env_values_0 := [?]string"));
+    assert!(schema.code.contains("counters_id_idx_btree"));
+    assert!(schema.code.contains("default_bytes_0_0 := [?]u8"));
+    assert!(schema.code.contains("default_values_0 := [?]host.Column_Default_Value"));
+    assert!(schema
+        .code
+        .contains("rls_policies := [?]host.Row_Level_Security_Definition"));
+    assert!(schema.code.contains("SELECT true;"));
+    assert!(schema.code.contains("write_module_definition :: proc"));
+    let entrypoints = files
+        .iter()
+        .find(|file| file.filename == "module_schema/module_entrypoints.odin")
+        .expect("Odin server ABI entrypoints should be generated");
+    assert!(entrypoints.code.contains("link_name = \"__describe_module__\""));
+    assert!(entrypoints.code.contains("link_name = \"__call_reducer__\""));
+    assert!(entrypoints
+        .code
+        .contains("handle_increment_reducer(caller, decoded_args_0, error)"));
+    assert!(entrypoints.code.contains("link_name = \"__call_procedure__\""));
+    assert!(entrypoints.code.contains("link_name = \"__call_view_anon__\""));
+    let handlers = files
+        .iter()
+        .find(|file| file.filename == "module_schema/module_handlers.odin")
+        .expect("User-owned Odin handler stubs should be generated");
+    assert!(!handlers.code.starts_with("// THIS FILE IS AUTOMATICALLY GENERATED"));
+    assert!(handlers.code.contains("handle_increment_reducer :: proc"));
+    let Some(extracted) = compile_odin_server_schema(files) else {
+        return;
+    };
+    let counters = extracted.tables().find(|table| &*table.name == "counters").unwrap();
+    assert_eq!(counters.columns[1].default_value, Some(AlgebraicValue::U64(7)));
+    assert!(extracted
+        .row_level_security()
+        .any(|policy| policy.sql.as_ref() == "SELECT true;"));
+    assert_eq!(extracted.schedules().count(), 2);
+    let shared = extracted.tables().find(|table| &*table.name == "shared").unwrap();
+    let shared_again = extracted.tables().find(|table| &*table.name == "shared_again").unwrap();
+    assert_eq!(shared.product_type_ref, shared_again.product_type_ref);
+    let reducer = extracted
+        .reducers()
+        .find(|reducer| reducer.name.as_ref() == "accept_shared")
+        .unwrap();
+    assert_eq!(
+        reducer.params.elements[0].algebraic_type,
+        AlgebraicType::Ref(shared.product_type_ref)
+    );
+    assert!(extracted
+        .environment()
+        .declarations()
+        .any(|entry| entry.name == "OPTIONAL" && entry.optional));
+}
+
+#[test]
+fn test_codegen_odin_server_module_submodules() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+
+    let mut child_builder = RawModuleDefV10Builder::new();
+    child_builder
+        .build_table_with_new_type("child_table", ProductType::from([("value", AlgebraicType::U64)]), true)
+        .finish();
+
+    let mut builder = RawModuleDefV10Builder::new();
+    builder.add_reducer("noop", ProductType::unit());
+    builder.add_submodule("child", child_builder.finish());
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    let schema = files
+        .iter()
+        .find(|file| file.filename == "module_schema/module_schema.odin")
+        .expect("Odin submodule schema should be generated");
+
+    assert!(schema.code.contains("host.Submodule_Definition"));
+    assert!(schema.code.contains("namespace = \"child\""));
+    assert!(schema.code.contains("module_bsatn = submodule_bytes_0[:]"));
+    assert!(schema
+        .code
+        .contains("rls_policies[:], submodules[:], sum_variants[:], enum_variants[:], explicit_names[:], case_policy[:], exported_types[:], false, type_fields[:])"));
+    assert!(files.iter().any(|file| {
+        file.filename == "module_schema/submodule_6368696c64/module_types.odin"
+            && file.code.contains("ChildTable :: struct")
+    }));
+
+    let mut child_with_reducer = RawModuleDefV10Builder::new();
+    let payload = child_with_reducer.add_algebraic_type(
+        [],
+        "Payload",
+        AlgebraicType::product([("value", AlgebraicType::U64)]),
+        true,
+    );
+    child_with_reducer.add_reducer(
+        "child_reducer",
+        ProductType::from([("payload", AlgebraicType::Ref(payload))]),
+    );
+    child_with_reducer.add_procedure("child_procedure", ProductType::unit(), AlgebraicType::U64);
+    child_with_reducer.add_http_handler("child_http");
+    child_with_reducer.add_view(
+        "child_view",
+        0,
+        true,
+        false,
+        ProductType::unit(),
+        AlgebraicType::array(AlgebraicType::Ref(payload)),
+    );
+    child_with_reducer.add_view(
+        "child_anon_view",
+        0,
+        true,
+        true,
+        ProductType::unit(),
+        AlgebraicType::array(AlgebraicType::Ref(payload)),
+    );
+    let mut grandchild = RawModuleDefV10Builder::new();
+    grandchild.add_reducer("grandchild_reducer", ProductType::unit());
+    child_with_reducer.add_submodule("grandchild", grandchild.finish());
+    let mut builder = RawModuleDefV10Builder::new();
+    builder.add_reducer("noop", ProductType::unit());
+    builder.add_procedure("root_procedure", ProductType::unit(), AlgebraicType::U64);
+    let root_row = builder.add_algebraic_type(
+        [],
+        "RootRow",
+        AlgebraicType::product([("value", AlgebraicType::U64)]),
+        true,
+    );
+    builder.add_view(
+        "root_view",
+        1,
+        true,
+        false,
+        ProductType::unit(),
+        AlgebraicType::array(AlgebraicType::Ref(root_row)),
+    );
+    builder.add_view(
+        "root_view_second",
+        0,
+        true,
+        false,
+        ProductType::unit(),
+        AlgebraicType::array(AlgebraicType::Ref(root_row)),
+    );
+    builder.add_submodule("child", child_with_reducer.finish());
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    let child_types = files
+        .iter()
+        .find(|file| file.filename == "module_schema/submodule_6368696c64/module_types.odin")
+        .unwrap();
+    assert!(child_types.code.contains("Payload :: struct"));
+    assert!(child_types.code.contains("payload: Payload"));
+    let entrypoints = files
+        .iter()
+        .find(|file| file.filename == "module_schema/module_entrypoints.odin")
+        .unwrap();
+    assert!(entrypoints
+        .code
+        .contains("import submodule_6368696c64 \"submodule_6368696c64\""));
+    assert!(entrypoints.code.contains("if id == 1"));
+    assert!(entrypoints
+        .code
+        .contains("submodule_6368696c64.handle_child_reducer_reducer"));
+    assert!(entrypoints
+        .code
+        .contains("submodule_6368696c64.handle_child_procedure_procedure"));
+    assert!(entrypoints
+        .code
+        .contains("submodule_6368696c64_6772616e646368696c64.handle_grandchild_reducer_reducer"));
+    assert!(entrypoints
+        .code
+        .contains("if id == 2 do return submodule_6368696c64.handle_child_view_view"));
+    assert!(entrypoints.code.contains("if id == 1 do return handle_root_view_view"));
+    assert!(entrypoints
+        .code
+        .contains("if id == 0 do return handle_root_view_second_view"));
+    assert!(entrypoints
+        .code
+        .contains("if id == 0 do return submodule_6368696c64.handle_child_anon_view_view_anon"));
+    assert!(files.iter().any(|file| {
+        file.filename == "module_schema/submodule_6368696c64/module_handlers.odin"
+            && file.code.contains("handle_child_reducer_reducer")
+            && file.code.contains("handle_child_http_http")
+    }));
+    let Some(extracted) = compile_odin_server_schema(files) else {
+        return;
+    };
+    assert!(extracted.reducer_by_name("child.child_reducer").is_some());
+    assert!(extracted
+        .reducer_by_name("child.grandchild.grandchild_reducer")
+        .is_some());
+    assert!(extracted.procedure_by_name("child.child_procedure").is_some());
+    assert!(extracted.view_by_name_with_module("child.child_view").is_some());
+    assert!(extracted.view_by_name_with_module("child.child_anon_view").is_some());
+    assert_eq!(extracted.view_by_name_with_module("root_view").unwrap().0.fn_ptr.0, 1);
+    assert_eq!(
+        extracted
+            .view_by_name_with_module("root_view_second")
+            .unwrap()
+            .0
+            .fn_ptr
+            .0,
+        0
+    );
+    assert_eq!(
+        extracted.submodules().values().next().unwrap().http_handlers().count(),
+        1
+    );
+}
+
+fn compile_odin_server_schema(files: Vec<spacetimedb_codegen::OutputFile>) -> Option<ModuleDef> {
+    let (_temp, module) = compile_odin_server_module(files)?;
+    Some(module.extract_schema_blocking())
+}
+
+fn compile_odin_server_module(
+    files: Vec<spacetimedb_codegen::OutputFile>,
+) -> Option<(tempfile::TempDir, CompiledModule)> {
+    if std::process::Command::new("odin").arg("version").output().is_err() {
+        return None;
+    }
+    let temp = tempfile::TempDir::new().unwrap();
+    for file in files {
+        let path = temp.path().join(file.filename);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, file.code).unwrap();
+    }
+    let bindings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("bindings-odin");
+    let wasm = temp.path().join("module.wasm");
+    let output = std::process::Command::new("odin")
+        .arg("build")
+        .arg(temp.path().join("module_schema"))
+        .arg(format!("-collection:stdb={}", bindings.display()))
+        .arg("-target:freestanding_wasm32")
+        .arg("-no-entry-point")
+        .arg(format!("-out:{}", wasm.display()))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let name = format!("odin-submodule-{}", temp.path().file_name().unwrap().to_string_lossy());
+    let module = CompiledModule::from_artifact(&name, "Wasm".parse().unwrap(), wasm);
+    Some((temp, module))
+}
+
+#[test]
+fn test_codegen_odin_server_submodule_without_root_reducer() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::ProductType;
+
+    let mut child = RawModuleDefV10Builder::new();
+    child.add_reducer("child_reducer", ProductType::unit());
+    let mut root = RawModuleDefV10Builder::new();
+    root.add_submodule("child", child.finish());
+    let module: ModuleDef = root.finish().try_into().unwrap();
+    let files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    let Some(extracted) = compile_odin_server_schema(files) else {
+        return;
+    };
+    assert!(extracted.reducer_by_name("child.child_reducer").is_some());
+}
+
+#[test]
+fn test_codegen_odin_server_nested_reducer_dispatch() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::sats::product;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+    use spacetimedb_testing::modules::DEFAULT_CONFIG;
+
+    let mut grandchild = RawModuleDefV10Builder::new();
+    grandchild.add_reducer("grandchild_reducer", ProductType::unit());
+    grandchild.add_procedure("grandchild_procedure", ProductType::unit(), AlgebraicType::U64);
+    let mut child = RawModuleDefV10Builder::new();
+    child.add_reducer("child_reducer", ProductType::unit());
+    child.add_reducer("unit_reducer", ProductType::from([("unit", AlgebraicType::unit())]));
+    let empty_payload = child.add_algebraic_type([], "EmptyPayload", AlgebraicType::product(ProductType::unit()), true);
+    child.add_reducer(
+        "empty_reducer",
+        ProductType::from([("empty", AlgebraicType::Ref(empty_payload))]),
+    );
+    child.add_procedure("child_procedure", ProductType::unit(), AlgebraicType::U64);
+    child.add_submodule("grandchild", grandchild.finish());
+    let mut root = RawModuleDefV10Builder::new();
+    let choice = root.add_algebraic_type(
+        [],
+        "Choice",
+        AlgebraicType::sum([("number", AlgebraicType::U64), ("empty", AlgebraicType::unit())]),
+        true,
+    );
+    root.add_reducer("root_reducer", ProductType::from([("value", AlgebraicType::U64)]));
+    root.add_reducer("root_unit", ProductType::from([("unit", AlgebraicType::unit())]));
+    root.add_reducer("choose", ProductType::from([("choice", AlgebraicType::Ref(choice))]));
+    root.add_procedure("root_procedure", ProductType::unit(), AlgebraicType::U64);
+    root.add_submodule("child", child.finish());
+    let module: ModuleDef = root.finish().try_into().unwrap();
+    let mut files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    for file in &mut files {
+        if file.filename == "module_schema/module_handlers.odin" {
+            file.code = "package module_schema\n\nimport \"stdb:host\"\n\nhandle_root_reducer_reducer :: proc(ctx: host.Reducer_Context, args: Root_Reducer_Args, error: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\treturn host.reducer_fail(error, \"root marker\")\n}\n\nhandle_root_unit_reducer :: proc(ctx: host.Reducer_Context, args: Root_Unit_Args, error: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\treturn host.reducer_fail(error, \"root unit marker\")\n}\n\nhandle_root_procedure_procedure :: proc(ctx: host.Procedure_Context, args: Root_Procedure_Args, result: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\tbuffer: [8]u8\n\tif host.write_procedure_result(u64, result, 11, buffer[:]) != .None do return -1\n\treturn 0\n}\n".to_string();
+            file.code.push_str("\nhandle_choose_reducer :: proc(ctx: host.Reducer_Context, args: Choose_Args, error: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\tif number, ok := args.choice.(Choice_Number); ok && number.value == 42 do return 0\n\tif _, ok := args.choice.(Choice_Empty); ok do return 0\n\treturn host.reducer_fail(error, \"invalid choice\")\n}\n");
+        } else if file.filename == "module_schema/submodule_6368696c64/module_handlers.odin" {
+            file.code = file.code.replace(
+                "\treturn -1 // implement this procedure",
+                "\tbuffer: [8]u8\n\tif host.write_procedure_result(u64, result, 22, buffer[:]) != .None do return -1\n\treturn 0",
+            );
+        } else if file.filename == "module_schema/submodule_6368696c64_6772616e646368696c64/module_handlers.odin" {
+            file.code = "package submodule_6368696c64_6772616e646368696c64\n\nimport \"stdb:host\"\n\nhandle_grandchild_reducer_reducer :: proc(ctx: host.Reducer_Context, args: Grandchild_Reducer_Args, error: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\t_ = error\n\treturn 0\n}\n\nhandle_grandchild_procedure_procedure :: proc(ctx: host.Procedure_Context, args: Grandchild_Procedure_Args, result: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\tbuffer: [8]u8\n\tif host.write_procedure_result(u64, result, 33, buffer[:]) != .None do return -1\n\treturn 0\n}\n".to_string();
+        }
+    }
+    let Some((_temp, module)) = compile_odin_server_module(files) else {
+        return;
+    };
+    module.with_module_async(DEFAULT_CONFIG, |module| async move {
+        let error = module
+            .call_reducer_binary("root_reducer", &product![7u64])
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("root marker"), "{error:#}");
+        let error = module
+            .call_reducer_binary("root_unit", &product![product![]])
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("root unit marker"), "{error:#}");
+        module
+            .call_reducer_binary(
+                "choose",
+                &product![spacetimedb_lib::AlgebraicValue::sum(0, 42u64.into())],
+            )
+            .await
+            .unwrap();
+        module
+            .call_reducer_binary(
+                "choose",
+                &product![spacetimedb_lib::AlgebraicValue::sum(
+                    1,
+                    spacetimedb_lib::AlgebraicValue::unit()
+                )],
+            )
+            .await
+            .unwrap();
+        let error = module
+            .call_reducer_binary("child.child_reducer", &product![])
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("implement reducer child_reducer"),
+            "{error:#}"
+        );
+        let error = module
+            .call_reducer_binary("child.unit_reducer", &product![product![]])
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("implement reducer unit_reducer"),
+            "{error:#}"
+        );
+        let error = module
+            .call_reducer_binary("child.empty_reducer", &product![product![]])
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("implement reducer empty_reducer"),
+            "{error:#}"
+        );
+        module
+            .call_reducer_binary("child.grandchild.grandchild_reducer", &product![])
+            .await
+            .unwrap();
+        for (name, value) in [
+            ("root_procedure", 11),
+            ("child.child_procedure", 22),
+            ("child.grandchild.grandchild_procedure", 33),
+        ] {
+            assert_eq!(
+                module.call_procedure_with_args(name, "[]").await.unwrap(),
+                spacetimedb_lib::AlgebraicValue::U64(value)
+            );
+        }
+    });
+}
+
+#[test]
+fn test_codegen_odin_server_nested_view_dispatch() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::identity::AuthCtx;
+    use spacetimedb_lib::sats::product;
+    use spacetimedb_lib::{AlgebraicType, Identity, ProductType};
+    use spacetimedb_testing::modules::DEFAULT_CONFIG;
+
+    let mut child = RawModuleDefV10Builder::new();
+    let child_row = child.add_algebraic_type(
+        [],
+        "ChildRow",
+        AlgebraicType::product([("value", AlgebraicType::U64)]),
+        true,
+    );
+    for (name, anonymous) in [("child_caller", false), ("child_anon", true)] {
+        child.add_view(
+            name,
+            0,
+            true,
+            anonymous,
+            ProductType::unit(),
+            AlgebraicType::array(AlgebraicType::Ref(child_row)),
+        );
+    }
+    let mut root = RawModuleDefV10Builder::new();
+    let root_row = root.add_algebraic_type(
+        [],
+        "RootRow",
+        AlgebraicType::product([("value", AlgebraicType::U64)]),
+        true,
+    );
+    for (name, index) in [("root_first", 1), ("root_second", 0)] {
+        root.add_view(
+            name,
+            index,
+            true,
+            false,
+            ProductType::unit(),
+            AlgebraicType::array(AlgebraicType::Ref(root_row)),
+        );
+    }
+    root.add_view(
+        "root_optional",
+        2,
+        true,
+        false,
+        ProductType::unit(),
+        AlgebraicType::option(AlgebraicType::Ref(root_row)),
+    );
+    root.add_submodule("child", child.finish());
+    let module: ModuleDef = root.finish().try_into().unwrap();
+    let mut files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    for file in &mut files {
+        let (package, row, views): (&str, &str, &[(&str, bool, u64)]) = match file.filename.as_str() {
+            "module_schema/module_handlers.odin" => (
+                "module_schema",
+                "RootRow",
+                &[
+                    ("root_first", false, 101),
+                    ("root_second", false, 102),
+                    ("root_optional", false, 103),
+                ],
+            ),
+            "module_schema/submodule_6368696c64/module_handlers.odin" => (
+                "submodule_6368696c64",
+                "ChildRow",
+                &[("child_caller", false, 201), ("child_anon", true, 202)],
+            ),
+            _ => continue,
+        };
+        file.code = format!("package {package}\n\nimport \"stdb:host\"\n\n");
+        for (name, anonymous, value) in views {
+            let (suffix, sender) = if *anonymous {
+                ("view_anon", "")
+            } else {
+                ("view", "sender: host.Identity, ")
+            };
+            let ignore_sender = if *anonymous { "" } else { "\t_ = sender\n" };
+            file.code.push_str(&format!("handle_{name}_{suffix} :: proc({sender}args: host.Bytes_Source, result: host.Bytes_Sink) -> i16 {{\n{ignore_sender}\t_ = args\n\trows := [?]{row}{{{{value = {value}}}}}\n\tbuffer: [16]u8\n\tif host.write_view_rows({row}, result, rows[:], buffer[:]) != .None do return -1\n\treturn host.VIEW_ABI_RESULT\n}}\n\n"));
+        }
+    }
+    let Some((_temp, module)) = compile_odin_server_module(files) else {
+        return;
+    };
+    module.with_module_async(DEFAULT_CONFIG, |module| async move {
+        let host = module.client.module();
+        for (view, value) in [
+            ("root_first", 101u64),
+            ("root_second", 102),
+            ("root_optional", 103),
+            ("child.child_caller", 201),
+            ("child.child_anon", 202),
+        ] {
+            let result = spacetimedb::sql::execute::run(
+                host.relational_db().clone(),
+                format!("SELECT * FROM {view}"),
+                AuthCtx::for_current(Identity::ZERO),
+                Some(host.info.subscriptions.clone()),
+                Some(host.clone()),
+                &mut vec![],
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.rows, [product![value]]);
+        }
+    });
+}
+
+#[test]
+fn test_codegen_odin_server_query_view() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::identity::AuthCtx;
+    use spacetimedb_lib::sats::product;
+    use spacetimedb_lib::{AlgebraicType, Identity, ProductType};
+    use spacetimedb_testing::modules::DEFAULT_CONFIG;
+
+    let mut builder = RawModuleDefV10Builder::new();
+    let row = builder.add_algebraic_type(
+        [],
+        "QueryRow",
+        AlgebraicType::product([("value", AlgebraicType::U64)]),
+        true,
+    );
+    builder.build_table("query_rows", row).finish();
+    builder.add_reducer("seed", ProductType::unit());
+    builder.add_view(
+        "rows_query",
+        0,
+        true,
+        true,
+        ProductType::unit(),
+        AlgebraicType::product([("__query__", AlgebraicType::Ref(row))]),
+    );
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let mut files = spacetimedb_codegen::odin::generate_server_module_schema(&module).unwrap();
+    for file in &mut files {
+        if file.filename == "module_schema/module_handlers.odin" {
+            file.code = "package module_schema\n\nimport \"stdb:host\"\n\nhandle_seed_reducer :: proc(ctx: host.Reducer_Context, args: Seed_Args, error: host.Bytes_Sink) -> i16 {\n\t_ = ctx\n\t_ = args\n\ttable, table_err := host.typed_table(QueryRow, \"query_rows\", \"\")\n\tif table_err != .None do return host.reducer_fail(error, \"table error\")\n\tbuffer: [16]u8\n\tstatus, err := host.typed_insert(QueryRow, table, QueryRow{value = 303}, buffer[:])\n\tif status != 0 || err != .None do return host.reducer_fail(error, \"insert error\")\n\treturn 0\n}\n\nhandle_rows_query_view_anon :: proc(args: host.Bytes_Source, result: host.Bytes_Sink) -> i16 {\n\t_ = args\n\tstatus, ok := host.write_view_query(result, \"SELECT * FROM query_rows\")\n\tif status != 0 || !ok do return -1\n\treturn host.VIEW_ABI_RESULT\n}\n".to_string();
+        }
+    }
+    let Some((_temp, module)) = compile_odin_server_module(files) else {
+        return;
+    };
+    module.with_module_async(DEFAULT_CONFIG, |module| async move {
+        module.call_reducer_binary("seed", &product![]).await.unwrap();
+        let host = module.client.module();
+        let result = spacetimedb::sql::execute::run(
+            host.relational_db().clone(),
+            "SELECT * FROM rows_query".to_string(),
+            AuthCtx::for_current(Identity::ZERO),
+            Some(host.info.subscriptions.clone()),
+            Some(host.clone()),
+            &mut vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.rows, [product![303u64]]);
+    });
+}
+
+#[test]
+fn test_codegen_odin_parameterized_view_has_no_argumentless_subscription() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+
+    let mut builder = RawModuleDefV10Builder::new();
+    let person = builder.add_algebraic_type([], "Person", AlgebraicType::product([("id", AlgebraicType::U64)]), true);
+    builder.add_view(
+        "person_by_id",
+        0,
+        true,
+        true,
+        ProductType::from([("id", AlgebraicType::U64)]),
+        AlgebraicType::array(AlgebraicType::Ref(person)),
+    );
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let files = generate(&module, &Odin, &CodegenOptions::default());
+    let view = files
+        .iter()
+        .find(|file| file.filename == "person_by_id_table.odin")
+        .expect("Odin view bindings should be generated");
+    assert!(view.code.contains("PERSON_BY_ID_TABLE"));
+    assert!(!view.code.contains("PERSON_BY_ID_SUBSCRIPTION"));
+    assert!(view.code.contains("person_by_id_query :: proc(id: u64) -> string"));
+    assert!(view.code.contains("client.sql_view_query(\"person_by_id\""));
+
+    let globals = files
+        .iter()
+        .find(|file| file.filename == "module_bindings.odin")
+        .expect("Odin global bindings should be generated");
+    assert!(!globals.code.contains("SELECT * FROM person_by_id"));
+}
+
+#[test]
+fn test_codegen_odin_receiver_bindings() {
+    use spacetimedb_lib::db::raw_def::v10::RawModuleDefV10Builder;
+    use spacetimedb_lib::{AlgebraicType, ProductType};
+
+    let mut builder = RawModuleDefV10Builder::new();
+    let player = builder.add_algebraic_type([], "Player", AlgebraicType::product([("id", AlgebraicType::U64)]), true);
+    builder.add_reducer("add", ProductType::from([("player", AlgebraicType::Ref(player))]));
+    let module: ModuleDef = builder.finish().try_into().unwrap();
+    let files = generate_receiver_bindings(&module, ReceiverLanguage::Odin, Some("game_world")).unwrap();
+    let receiver = files
+        .iter()
+        .find(|file| file.filename == "receiver_bindings.odin")
+        .expect("Odin receiver bindings should be generated");
+    assert!(receiver.code.contains("Add_Args :: struct"));
+    assert!(receiver.code.contains("ADD_SIGNATURE_HASH :: [32]u8"));
+    assert!(receiver
+        .code
+        .contains("add_outbox :: proc($Row: typeid, table: ^host.Table_Definition"));
+    assert!(receiver.code.contains("outbox_row.player"));
+    assert!(receiver.code.contains("host.make_outbox_definition"));
+    assert!(receiver.code.contains("table.outbox = outbox"));
+    assert!(files.iter().any(|file| file.filename == "player_type.odin"));
 }
 
 #[test]
